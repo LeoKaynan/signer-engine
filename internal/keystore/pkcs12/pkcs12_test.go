@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	path     = "../../../testdata/valid_rsa2048.p12"
+	path     = "../../../testdata/with_chain.p12"
 	password = "test"
 )
 
@@ -87,9 +87,34 @@ func TestStore_GetSigner_Valid(t *testing.T) {
 	if cert == nil {
 		t.Fatal("expected certificate, got nil")
 	}
-	wantCN := "signer-engine-test-rsa2048"
+	wantCN := "signer-engine-test-leaf"
 	if cert.Subject.CommonName != wantCN {
 		t.Fatalf("expected certificate common name to be %q, got %q", wantCN, cert.Subject.CommonName)
+	}
+}
+
+func TestStore_Chain_ReturnsIntermidates(t *testing.T) {
+	store := pkcs12.NewStore(pkcs12.Config{
+		Path:     path,
+		Password: password,
+	})
+	err := store.Open()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	defer store.Close()
+
+	signer, err := store.GetSigner("")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected signer, got nil")
+	}
+
+	chain := signer.Chain()
+	if len(chain) == 0 {
+		t.Fatal("expected certificates in the chain, got none")
 	}
 }
 
