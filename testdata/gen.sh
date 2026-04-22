@@ -25,30 +25,6 @@ echo "password: $PASSWORD"
 echo
 
 # -----------------------------------------------------------------------------
-# valid_rsa2048.p12
-# -----------------------------------------------------------------------------
-# Self-signed RSA 2048 certificate, 100-year validity.
-# Use case: happy path for Open/GetSigner/Sign.
-gen_valid_rsa2048() {
-    local name="valid_rsa2048"
-
-    openssl req -x509 -newkey rsa:2048 -nodes \
-        -keyout "$TMP/$name.key" \
-        -out "$TMP/$name.crt" \
-        -days 36500 \
-        -subj "/CN=signer-engine-test-rsa2048" \
-        2>/dev/null
-
-    openssl pkcs12 -export \
-        -inkey "$TMP/$name.key" \
-        -in "$TMP/$name.crt" \
-        -out "$SCRIPT_DIR/$name.p12" \
-        -password "pass:$PASSWORD"
-
-    echo "  generated: $name.p12"
-}
-
-# -----------------------------------------------------------------------------
 # with_chain.p12
 # -----------------------------------------------------------------------------
 # Leaf certificate issued by an intermediate CA, which is issued by a root CA.
@@ -109,7 +85,6 @@ gen_with_chain() {
     echo "  generated: $name.p12"
 }
 
-gen_valid_rsa2048
 gen_with_chain
 
 echo
