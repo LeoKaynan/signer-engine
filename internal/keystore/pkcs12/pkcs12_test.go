@@ -21,6 +21,17 @@ func TestStore_Open_RequiresPath(t *testing.T) {
 	}
 }
 
+func TestStore_Open_FileNotFound(t *testing.T) {
+	store := pkcs12.NewStore(pkcs12.Config{
+		Path:     "does-not-exist.p12",
+		Password: password,
+	})
+	err := store.Open()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
 func TestStore_Open_WrongPassword(t *testing.T) {
 	store := pkcs12.NewStore(pkcs12.Config{
 		Path:     path,
