@@ -1,15 +1,14 @@
 package keystore
 
 import (
-	"context"
 	"crypto"
 	"crypto/x509"
 )
 
 type Store interface {
-	Open(ctx context.Context) error
-	GetSigner(ctx context.Context, alias string) (Signer, error)
-	Close(ctx context.Context) error
+	Open() error
+	GetSigner(alias string) (Signer, error)
+	Close() error
 }
 
 type Signer interface {

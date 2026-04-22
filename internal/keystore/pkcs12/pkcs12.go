@@ -1,7 +1,6 @@
 package pkcs12
 
 import (
-	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -30,7 +29,7 @@ func NewStore(cfg Config) *Store {
 	return &Store{cfg: cfg}
 }
 
-func (s *Store) Open(ctx context.Context) error {
+func (s *Store) Open() error {
 	if s.cfg.Path == "" {
 		return errors.New("path is required")
 	}
@@ -56,7 +55,7 @@ func (s *Store) Open(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) GetSigner(ctx context.Context, alias string) (keystore.Signer, error) {
+func (s *Store) GetSigner(alias string) (keystore.Signer, error) {
 	if s.privateKey == nil {
 		return nil, errors.New("store is not open")
 	}
@@ -64,7 +63,7 @@ func (s *Store) GetSigner(ctx context.Context, alias string) (keystore.Signer, e
 	return newSigner(s.privateKey.(crypto.Signer), s.certificate, s.chain), nil
 }
 
-func (s *Store) Close(ctx context.Context) error {
+func (s *Store) Close() error {
 	s.privateKey = nil
 	s.certificate = nil
 	s.chain = nil
