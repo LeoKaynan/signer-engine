@@ -8,7 +8,6 @@ import (
 type Store interface {
 	Open() error
 	GetSigner(alias string) (Signer, error)
-	Close() error
 }
 
 type Signer interface {

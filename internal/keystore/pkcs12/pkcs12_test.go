@@ -24,7 +24,6 @@ func newOpenedSigner(t *testing.T) keystore.Signer {
 	if err := store.Open(); err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
 
 	signer, err := store.GetSigner("")
 	if err != nil {
@@ -82,7 +81,6 @@ func TestStore_Open_Valid(t *testing.T) {
 	if err := store.Open(); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer store.Close()
 }
 
 func TestSigner_Certificate_ReturnsLeafCert(t *testing.T) {

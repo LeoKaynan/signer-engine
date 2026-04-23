@@ -62,10 +62,3 @@ func (s *Store) GetSigner(alias string) (keystore.Signer, error) {
 
 	return newSigner(s.privateKey.(crypto.Signer), s.certificate, s.chain), nil
 }
-
-func (s *Store) Close() error {
-	s.privateKey = nil
-	s.certificate = nil
-	s.chain = nil
-	return nil
-}
