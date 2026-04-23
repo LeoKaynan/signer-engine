@@ -1,1 +1,1 @@
-RFC5652 - Cryptographic Message Syntax (CMS) - https://www.rfc-editor.org/rfc/rfc5652.txt
+RFC5652 - Cryptographic Message Syntax (CMS) - https://www.rfc-editor.org/rfc/rfc5652
