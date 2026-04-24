@@ -41,15 +41,15 @@ type SignerInfo struct {
 	SID                IssuerAndSerialNumber
 	DigestAlgorithm    AlgorithmIdentifier
 	SignedAttrs        []Attribute `asn1:"tag:0,implicit,optional,set"`
-	signatureAlgorithm AlgorithmIdentifier
+	SignatureAlgorithm AlgorithmIdentifier
 	Signature          []byte
 	UnsignedAttrs      []Attribute `asn1:"tag:1,implicit,optional,set"`
 }
 
 // RFC5652 5.1  SignedData Type
-type SignerData struct {
+type SignedData struct {
 	Version          int
-	DigestAlgorithm  []AlgorithmIdentifier `asn1:"set"`
+	DigestAlgorithms []AlgorithmIdentifier `asn1:"set"`
 	EncapContentInfo EncapsulatedContentInfo
 	Certificates     []asn1.RawValue `asn1:"tag:0,implicit,optional,set"`
 	CRLs             []asn1.RawValue `asn1:"tag:1,implicit,optional,set"`
