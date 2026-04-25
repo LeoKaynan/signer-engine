@@ -27,6 +27,9 @@ var (
 	// RFC5035 3 Insert New Section 5.4.1 'Signing Certificate Attribute Definition Version 2'
 	OIDSigningCertificateV2 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 47}
 
+	// RFC5126 5.8.1 signature-policy-identifier
+	OIDSignaturePolicyId = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 15}
+
 	// RFC4055 2.1 One-way Hash Functions
 	OIDSHA1   = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
 	OIDSHA224 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}

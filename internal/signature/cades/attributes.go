@@ -45,3 +45,28 @@ func SigningCertificateV2Attribute(cert *x509.Certificate) (cms.Attribute, error
 		},
 	}, nil
 }
+
+func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte) (cms.Attribute, error) {
+	payload := SignaturePolicyIdentifier{
+		SigPolicyId: policyOID,
+		SigPolicyHash: OtherHashAlgAndValue{
+			HashAlgorithm: &cms.AlgorithmIdentifier{
+				Algorithm:  constants.OIDSHA256,
+				Parameters: asn1.NullRawValue,
+			},
+			HashValue: hash,
+		},
+	}
+
+	der, err := asn1.Marshal(payload)
+	if err != nil {
+		return cms.Attribute{}, fmt.Errorf("failed to marshal signature policy identifier: %w", err)
+	}
+
+	return cms.Attribute{
+		AttrType: constants.OIDSignaturePolicyId,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: der},
+		},
+	}, nil
+}
