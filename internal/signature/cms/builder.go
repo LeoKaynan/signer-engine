@@ -9,9 +9,10 @@ import (
 )
 
 type Builder struct {
-	Signer   keystore.Signer
-	HashAlg  crypto.Hash
-	Detached bool
+	Signer                keystore.Signer
+	HashAlg               crypto.Hash
+	Detached              bool
+	ExtraSignedAttributes []Attribute
 }
 
 func (b *Builder) Build(data []byte) ([]byte, error) {
@@ -43,6 +44,8 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 			},
 		},
 	}
+
+	signedAttrs = append(signedAttrs, b.ExtraSignedAttributes...)
 
 	// RFC5652 5.4 Message Digest Calculation Process
 	// The IMPLICIT [0] tag in the signedAttrs is not used for the DER encoding, rather an EXPLICIT SET OF tag is used.
