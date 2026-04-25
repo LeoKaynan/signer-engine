@@ -21,6 +21,7 @@ func (adrbPolicy) Identifier() asn1.ObjectIdentifier {
 	return asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 1, 2, 4, 2}
 }
 
+// http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4der-sha256.txt
 var adrbPolicyDocHash = mustDecodeHex(
 	"25f148b0828c0ba93695742469566fcc4d1618aa0c20cac56ae72b3419ecee6b",
 )
@@ -34,7 +35,6 @@ func mustDecodeHex(s string) []byte {
 }
 
 func (p adrbPolicy) SignedAttributes() []cms.Attribute {
-	// http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4der-sha256.txt
 	attr, err := cades.PolicyIdentifierAttribute(p.Identifier(), adrbPolicyDocHash)
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal policy identifier attribute: %v", err))
