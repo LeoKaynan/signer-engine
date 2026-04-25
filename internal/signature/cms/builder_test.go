@@ -19,7 +19,7 @@ func TestBuilder_Build(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 
-	signer, err := store.GetSigner("")
+	signer, err := store.GetSigner()
 	if err != nil {
 		t.Fatalf("GetSigner failed: %v", err)
 	}

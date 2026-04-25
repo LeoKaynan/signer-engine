@@ -25,7 +25,7 @@ func newOpenedSigner(t *testing.T) keystore.Signer {
 		t.Fatalf("Open failed: %v", err)
 	}
 
-	signer, err := store.GetSigner("")
+	signer, err := store.GetSigner()
 	if err != nil {
 		t.Fatalf("GetSigner failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestStore_GetSigner_BeforeOpen(t *testing.T) {
 		Path:     path,
 		Password: password,
 	})
-	_, err := store.GetSigner("")
+	_, err := store.GetSigner()
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

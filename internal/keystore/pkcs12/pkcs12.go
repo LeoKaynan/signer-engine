@@ -55,7 +55,7 @@ func (s *Store) Open() error {
 	return nil
 }
 
-func (s *Store) GetSigner(alias string) (keystore.Signer, error) {
+func (s *Store) GetSigner() (keystore.Signer, error) {
 	if s.privateKey == nil {
 		return nil, errors.New("store is not open")
 	}

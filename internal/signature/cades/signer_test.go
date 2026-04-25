@@ -22,7 +22,7 @@ func TestSigner_Sign(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 
-	keySigner, err := store.GetSigner("")
+	keySigner, err := store.GetSigner()
 	if err != nil {
 		t.Fatalf("GetSigner failed: %v", err)
 	}
