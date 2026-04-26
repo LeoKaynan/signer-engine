@@ -5,11 +5,11 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"signer-engine/internal/constants"
-	"signer-engine/internal/keystore"
+	"signer-engine/internal/signer"
 )
 
 type Builder struct {
-	Signer                keystore.Signer
+	Credential            signer.Credential
 	HashAlg               crypto.Hash
 	Detached              bool
 	ExtraSignedAttributes []Attribute
@@ -58,7 +58,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	toBeSignedHash.Write(signedAttrsDER)
 	toBeSignedBytes := toBeSignedHash.Sum(nil)
 
-	signature, err := b.Signer.Sign(toBeSignedBytes, b.HashAlg)
+	signature, err := b.Credential.Sign(toBeSignedBytes, b.HashAlg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
@@ -72,9 +72,9 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		Version: 1,
 		SID: IssuerAndSerialNumber{
 			Issuer: asn1.RawValue{
-				FullBytes: b.Signer.Certificate().RawIssuer,
+				FullBytes: b.Credential.Certificate().RawIssuer,
 			},
-			SerialNumber: b.Signer.Certificate().SerialNumber,
+			SerialNumber: b.Credential.Certificate().SerialNumber,
 		},
 		DigestAlgorithm: AlgorithmIdentifier{
 			Algorithm:  constants.OIDSHA256,
@@ -89,10 +89,10 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	}
 
 	certificates := []asn1.RawValue{
-		{FullBytes: b.Signer.Certificate().Raw},
+		{FullBytes: b.Credential.Certificate().Raw},
 	}
 
-	for _, c := range b.Signer.Chain() {
+	for _, c := range b.Credential.Chain() {
 		certificates = append(certificates, asn1.RawValue{FullBytes: c.Raw})
 	}
 

@@ -3,17 +3,17 @@ package cades
 import (
 	"crypto"
 	"fmt"
-	"signer-engine/internal/keystore"
 	"signer-engine/internal/signature/cms"
+	"signer-engine/internal/signer"
 	"time"
 )
 
 type Signer struct {
-	Signer   keystore.Signer
-	HashAlg  crypto.Hash
-	Detached bool
-	Policy   cms.Policy
-	Now      func() time.Time
+	Credential signer.Credential
+	HashAlg    crypto.Hash
+	Detached   bool
+	Policy     cms.Policy
+	Now        func() time.Time
 }
 
 func (s *Signer) now() time.Time {
@@ -24,7 +24,7 @@ func (s *Signer) now() time.Time {
 }
 
 func (s *Signer) Sign(data []byte) ([]byte, error) {
-	certificate := s.Signer.Certificate()
+	certificate := s.Credential.Certificate()
 
 	if s.HashAlg == 0 {
 		return nil, fmt.Errorf("hash algorithm is required")
@@ -59,7 +59,7 @@ func (s *Signer) Sign(data []byte) ([]byte, error) {
 	}
 
 	builder := cms.Builder{
-		Signer:                s.Signer,
+		Credential:            s.Credential,
 		HashAlg:               s.HashAlg,
 		Detached:              s.Detached,
 		ExtraSignedAttributes: extras,

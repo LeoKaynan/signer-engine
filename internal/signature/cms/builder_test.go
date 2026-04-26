@@ -5,29 +5,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"signer-engine/internal/keystore/pkcs12"
+	"signer-engine/internal/signer/pkcs12"
 	"testing"
 )
 
 func TestBuilder_Build(t *testing.T) {
-	store := pkcs12.NewStore(pkcs12.Config{
-		Path:     "../../../testdata/with_chain.p12",
-		Password: "test",
-	})
-
-	if err := store.Open(); err != nil {
-		t.Fatalf("Open failed: %v", err)
-	}
-
-	signer, err := store.GetSigner()
+	credential, err := pkcs12.NewCredentialFromFile("../../../testdata/with_chain.p12", "test")
 	if err != nil {
-		t.Fatalf("GetSigner failed: %v", err)
+		t.Fatalf("NewCredentialFromFile failed: %v", err)
 	}
 
 	builder := Builder{
-		Signer:   signer,
-		HashAlg:  crypto.SHA256,
-		Detached: false,
+		Credential: credential,
+		HashAlg:    crypto.SHA256,
+		Detached:   false,
 	}
 
 	content := []byte("Hello, world!")
