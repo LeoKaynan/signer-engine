@@ -4,7 +4,10 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/x509"
+	"signer-engine/internal/signer"
 )
+
+var _ signer.Credential = (*credential)(nil)
 
 type credential struct {
 	privateKey  crypto.Signer
