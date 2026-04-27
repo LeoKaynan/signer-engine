@@ -31,7 +31,7 @@ func (s *Signer) Sign(data []byte) ([]byte, error) {
 	}
 
 	if s.Policy != nil {
-		if err := s.Policy.ValidateSigningCertificate(certificate); err != nil {
+		if err := s.Policy.ValidateSigningCertificate(certificate, s.Credential.Chain()); err != nil {
 			return nil, fmt.Errorf("failed to validate signing certificate: %w", err)
 		}
 		if mand := s.Policy.MandatedHashAlg(); mand != 0 && mand != s.HashAlg {
