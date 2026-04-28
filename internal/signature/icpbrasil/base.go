@@ -103,15 +103,15 @@ func validateChain(cert *x509.Certificate, chain []*x509.Certificate, roots *x50
 		intermediates.AddCert(intermediate)
 	}
 
+	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("certificate key usage does not allow digital signature")
+	}
+
 	_, err := cert.Verify(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
-
-	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return errors.New("certificate key usage does not allow digital signature")
-	}
 
 	return err
 }
