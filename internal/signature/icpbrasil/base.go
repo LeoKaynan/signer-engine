@@ -20,9 +20,11 @@ var (
 	icpBrasilRootsErr  error
 )
 
-type icpBrasilBase struct{}
+type icpBrasilBase struct {
+	rootPool func() (*x509.CertPool, error)
+}
 
-func (icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain []*x509.Certificate) error {
+func (p icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain []*x509.Certificate) error {
 	if cert == nil {
 		return errors.New("certificate is required")
 	}
@@ -38,7 +40,12 @@ func (icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain []
 		return errors.New("certificate policies extension does not contain ICP-Brasil prefix")
 	}
 
-	roots, err := icpBrasilRootPool()
+	rootPool := p.rootPool
+	if rootPool == nil {
+		rootPool = icpBrasilRootPool
+	}
+
+	roots, err := rootPool()
 	if err != nil {
 		return fmt.Errorf("failed to get icp brasil root pool: %w", err)
 	}
