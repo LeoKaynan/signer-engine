@@ -1,4 +1,4 @@
-package cms
+package signaturepolicy
 
 import (
 	"crypto"
@@ -8,7 +8,6 @@ import (
 
 type Policy interface {
 	Identifier() asn1.ObjectIdentifier
-	SignedAttributes() []Attribute
 	ValidateSigningCertificate(certificate *x509.Certificate, chain []*x509.Certificate) error
 	MandatedHashAlg() crypto.Hash
 }

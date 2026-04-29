@@ -30,13 +30,13 @@ func (p icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain 
 	}
 
 	// DOC-ICP-04.01 Versão 5.0
-	if !subjectHasOID(cert, asn1.ObjectIdentifier{2, 16, 76, 1, 3, 1}) &&
-		!subjectHasOID(cert, asn1.ObjectIdentifier{2, 16, 76, 1, 3, 3}) {
+	if !subjectHasOID(cert, oidSubjectCPF) &&
+		!subjectHasOID(cert, oidSubjectCNPJ) {
 		return errors.New("certificate subject does not contain CPF or CNPJ")
 	}
 
 	// DOC-ICP-04.01 Versão 5.0
-	if !hasPolicyWithPrefix(cert, asn1.ObjectIdentifier{2, 16, 76, 1, 2}) {
+	if !hasPolicyWithPrefix(cert, oidCertificatePolicyICPBRasilPrefix) {
 		return errors.New("certificate policies extension does not contain ICP-Brasil prefix")
 	}
 

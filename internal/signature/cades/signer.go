@@ -12,7 +12,7 @@ type Signer struct {
 	Credential signer.Credential
 	HashAlg    crypto.Hash
 	Detached   bool
-	Policy     cms.Policy
+	Policy     Policy
 	Now        func() time.Time
 }
 

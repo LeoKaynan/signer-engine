@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"encoding/asn1"
 	"fmt"
-	"signer-engine/internal/constants"
+	"signer-engine/internal/cryptoutil"
 	"signer-engine/internal/signer"
 )
 
@@ -25,20 +25,20 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal message digest value: %w", err)
 	}
 
-	contentTypeValueDER, err := asn1.Marshal(constants.OIDData)
+	contentTypeValueDER, err := asn1.Marshal(OIDData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal content type value: %w", err)
 	}
 
 	signedAttrs := []Attribute{
 		{
-			AttrType: constants.OIDContentType,
+			AttrType: OIDContentType,
 			AttrValues: []asn1.RawValue{
 				{FullBytes: contentTypeValueDER},
 			},
 		},
 		{
-			AttrType: constants.OIDMessageDigest,
+			AttrType: OIDMessageDigest,
 			AttrValues: []asn1.RawValue{
 				{FullBytes: messageDigestValueDER},
 			},
@@ -77,12 +77,12 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 			SerialNumber: b.Credential.Certificate().SerialNumber,
 		},
 		DigestAlgorithm: AlgorithmIdentifier{
-			Algorithm:  constants.OIDSHA256,
+			Algorithm:  cryptoutil.OIDSHA256,
 			Parameters: asn1.NullRawValue,
 		},
 		SignedAttrs: signedAttrs,
 		SignatureAlgorithm: AlgorithmIdentifier{
-			Algorithm:  constants.OIDRSAEncryption,
+			Algorithm:  cryptoutil.OIDRSAEncryption,
 			Parameters: asn1.NullRawValue,
 		},
 		Signature: signature,
@@ -96,7 +96,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		certificates = append(certificates, asn1.RawValue{FullBytes: c.Raw})
 	}
 
-	encapsulatedContentInfo := EncapsulatedContentInfo{EContentType: constants.OIDData}
+	encapsulatedContentInfo := EncapsulatedContentInfo{EContentType: OIDData}
 	if !b.Detached {
 		encapsulatedContentInfo.EContent = data
 	}
@@ -108,7 +108,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		Version: 1,
 		DigestAlgorithms: []AlgorithmIdentifier{
 			{
-				Algorithm:  constants.OIDSHA256,
+				Algorithm:  cryptoutil.OIDSHA256,
 				Parameters: asn1.NullRawValue,
 			},
 		},
@@ -125,7 +125,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	}
 
 	contentInfo := ContentInfo{
-		ContentType: constants.OIDSignedData,
+		ContentType: OIDSignedData,
 		Content: asn1.RawValue{
 			Class:      asn1.ClassContextSpecific,
 			Tag:        0,

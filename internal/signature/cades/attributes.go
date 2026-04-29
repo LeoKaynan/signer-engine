@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
-	"signer-engine/internal/constants"
+	"signer-engine/internal/cryptoutil"
 	"signer-engine/internal/signature/cms"
 	"time"
 )
@@ -17,7 +17,7 @@ func SigningTimeAttribute(t time.Time) (cms.Attribute, error) {
 	}
 
 	return cms.Attribute{
-		AttrType: constants.OIDSigningTime,
+		AttrType: cms.OIDSigningTime,
 		AttrValues: []asn1.RawValue{
 			{FullBytes: der},
 		},
@@ -39,7 +39,7 @@ func SigningCertificateV2Attribute(cert *x509.Certificate) (cms.Attribute, error
 	}
 
 	return cms.Attribute{
-		AttrType: constants.OIDSigningCertificateV2,
+		AttrType: OIDSigningCertificateV2,
 		AttrValues: []asn1.RawValue{
 			{FullBytes: der},
 		},
@@ -51,7 +51,7 @@ func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte) (cm
 		SigPolicyId: policyOID,
 		SigPolicyHash: OtherHashAlgAndValue{
 			HashAlgorithm: &cms.AlgorithmIdentifier{
-				Algorithm:  constants.OIDSHA256,
+				Algorithm:  cryptoutil.OIDSHA256,
 				Parameters: asn1.NullRawValue,
 			},
 			HashValue: hash,
@@ -64,7 +64,7 @@ func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte) (cm
 	}
 
 	return cms.Attribute{
-		AttrType: constants.OIDSignaturePolicyId,
+		AttrType: OIDSignaturePolicyID,
 		AttrValues: []asn1.RawValue{
 			{FullBytes: der},
 		},
