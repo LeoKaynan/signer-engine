@@ -10,14 +10,11 @@ import (
 	"testing"
 
 	"signer-engine/internal/constants"
-	"signer-engine/internal/signer/pkcs12"
+	"signer-engine/internal/testutil/certfixture"
 )
 
 func TestSigner_Sign(t *testing.T) {
-	credential, err := pkcs12.NewCredentialFromFile("../../../testdata/with_chain.p12", "test")
-	if err != nil {
-		t.Fatalf("NewCredentialFromFile failed: %v", err)
-	}
+	credential := certfixture.NewCredential(t)
 
 	cadesSigner := Signer{
 		Credential: credential,

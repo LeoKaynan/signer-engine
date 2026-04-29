@@ -2,61 +2,76 @@ package icpbrasil
 
 import (
 	"crypto/x509"
+	"signer-engine/internal/testutil/certfixture"
 	"testing"
 )
 
 func TestValidateSigningCertificate_ValidFakeICPBrasilCertificate(t *testing.T) {
-	leaf, chain, roots := newFakeICPBrasilChain(t, nil)
+	chain := certfixture.NewChain(t,
+		certfixture.WithCPF("12345678901"),
+		certfixture.WithICPBrasilPolicy(),
+	)
 
-	base := newTestPolicy(roots)
+	base := newICPBrasilBaseWithRoots(chain.Roots)
 
-	if err := base.ValidateSigningCertificate(leaf, chain); err != nil {
+	if err := base.ValidateSigningCertificate(chain.Leaf, chain.Chain); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
 
 func TestValidateSigningCertificate_RejectsMissingICPBrasilPolicy(t *testing.T) {
-	leaf, chain, roots := newFakeICPBrasilChain(t, func(template *x509.Certificate) {
-		template.ExtraExtensions = nil
-	})
+	chain := certfixture.NewChain(t, certfixture.WithCPF("12345678901"))
 
-	base := newTestPolicy(roots)
+	base := newICPBrasilBaseWithRoots(chain.Roots)
 
-	if err := base.ValidateSigningCertificate(leaf, chain); err == nil {
+	if err := base.ValidateSigningCertificate(chain.Leaf, chain.Chain); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
 func TestValidateSigningCertificate_RejectsMissingDigitalSignatureUsage(t *testing.T) {
-	leaf, chain, roots := newFakeICPBrasilChain(t, func(template *x509.Certificate) {
-		template.KeyUsage = x509.KeyUsageKeyEncipherment
-	})
+	chain := certfixture.NewChain(t,
+		certfixture.WithCPF("12345678901"),
+		certfixture.WithICPBrasilPolicy(),
+		certfixture.WithLeaf(func(template *x509.Certificate) {
+			template.KeyUsage = x509.KeyUsageKeyEncipherment
+		}),
+	)
 
-	base := newTestPolicy(roots)
+	base := newICPBrasilBaseWithRoots(chain.Roots)
 
-	if err := base.ValidateSigningCertificate(leaf, chain); err == nil {
+	if err := base.ValidateSigningCertificate(chain.Leaf, chain.Chain); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
 func TestValidateSigningCertificate_RejectsUntrustedRoot(t *testing.T) {
-	leaf, chain, _ := newFakeICPBrasilChain(t, nil)
+	chain := certfixture.NewChain(t,
+		certfixture.WithCPF("12345678901"),
+		certfixture.WithICPBrasilPolicy(),
+	)
 
-	base := newTestPolicy(x509.NewCertPool())
+	base := newICPBrasilBaseWithRoots(x509.NewCertPool())
 
-	if err := base.ValidateSigningCertificate(leaf, chain); err == nil {
+	if err := base.ValidateSigningCertificate(chain.Leaf, chain.Chain); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
 
 func TestValidateSigningCertificate_RejectsMissingCPFOrCNPJ(t *testing.T) {
-	leaf, chain, roots := newFakeICPBrasilChain(t, func(template *x509.Certificate) {
-		template.Subject.ExtraNames = nil
-	})
+	chain := certfixture.NewChain(t, certfixture.WithICPBrasilPolicy())
 
-	base := newTestPolicy(roots)
+	base := newICPBrasilBaseWithRoots(chain.Roots)
 
-	if err := base.ValidateSigningCertificate(leaf, chain); err == nil {
+	if err := base.ValidateSigningCertificate(chain.Leaf, chain.Chain); err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+}
+
+func newICPBrasilBaseWithRoots(roots *x509.CertPool) icpBrasilBase {
+	return icpBrasilBase{
+		rootPool: func() (*x509.CertPool, error) {
+			return roots, nil
+		},
 	}
 }

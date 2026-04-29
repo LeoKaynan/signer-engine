@@ -5,24 +5,48 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"os"
+	"path/filepath"
 	"signer-engine/internal/signer"
 	"signer-engine/internal/signer/pkcs12"
+	"signer-engine/internal/testutil/certfixture"
 	"testing"
+
+	gopkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
-const (
-	path     = "../../../testdata/with_chain.p12"
-	password = "test"
-)
+const password = "test"
 
 func newTestCredential(t *testing.T) signer.Credential {
 	t.Helper()
 
-	credential, err := pkcs12.NewCredentialFromFile(path, password)
+	credential, err := pkcs12.NewCredentialFromFile(newTestP12File(t), password)
 	if err != nil {
 		t.Fatalf("NewCredentialFromFile failed: %v", err)
 	}
 	return credential
+}
+
+func newTestP12(t *testing.T) []byte {
+	t.Helper()
+
+	chain := certfixture.NewChain(t)
+	data, err := gopkcs12.Modern.Encode(chain.LeafKey, chain.Leaf, chain.Chain, password)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	return data
+}
+
+func newTestP12File(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "credential.p12")
+	if err := os.WriteFile(path, newTestP12(t), 0o600); err != nil {
+		t.Fatalf("write p12: %v", err)
+	}
+
+	return path
 }
 
 func TestNewCredentialFromFile_RequiresPath(t *testing.T) {
@@ -40,24 +64,20 @@ func TestNewCredentialFromFile_FileNotFound(t *testing.T) {
 }
 
 func TestNewCredentialFromFile_WrongPassword(t *testing.T) {
-	_, err := pkcs12.NewCredentialFromFile(path, "wrong")
+	_, err := pkcs12.NewCredentialFromFile(newTestP12File(t), "wrong")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
 
 func TestNewCredentialFromFile_Valid(t *testing.T) {
-	if _, err := pkcs12.NewCredentialFromFile(path, password); err != nil {
+	if _, err := pkcs12.NewCredentialFromFile(newTestP12File(t), password); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
 
 func TestNewCredentialFromBytes_Valid(t *testing.T) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
+	data := newTestP12(t)
 	if _, err := pkcs12.NewCredentialFromBytes(data, password); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

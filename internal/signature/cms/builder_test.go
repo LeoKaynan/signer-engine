@@ -5,15 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"signer-engine/internal/signer/pkcs12"
+	"signer-engine/internal/testutil/certfixture"
 	"testing"
 )
 
 func TestBuilder_Build(t *testing.T) {
-	credential, err := pkcs12.NewCredentialFromFile("../../../testdata/with_chain.p12", "test")
-	if err != nil {
-		t.Fatalf("NewCredentialFromFile failed: %v", err)
-	}
+	credential := certfixture.NewCredential(t)
 
 	builder := Builder{
 		Credential: credential,
@@ -32,11 +29,11 @@ func TestBuilder_Build(t *testing.T) {
 	sigPath := filepath.Join(tmp, "signature.p7s")
 	dataPath := filepath.Join(tmp, "data.bin")
 
-	if err := os.WriteFile(sigPath, sigDER, 0644); err != nil {
-		t.Fatalf("Failed to write signature file: %v", err)
+	if err := os.WriteFile(sigPath, sigDER, 0o644); err != nil {
+		t.Fatalf("failed to write signature file: %v", err)
 	}
-	if err := os.WriteFile(dataPath, content, 0644); err != nil {
-		t.Fatalf("Failed to write data file: %v", err)
+	if err := os.WriteFile(dataPath, content, 0o644); err != nil {
+		t.Fatalf("failed to write data file: %v", err)
 	}
 
 	cmd := exec.Command("openssl", "cms", "-verify", "-noverify",
@@ -48,6 +45,6 @@ func TestBuilder_Build(t *testing.T) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to verify signature: %v, output: %s", err, string(output))
+		t.Fatalf("failed to verify signature: %v, output: %s", err, string(output))
 	}
 }
