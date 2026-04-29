@@ -21,12 +21,18 @@ type SigningCertificateV2 struct {
 
 // RFC5126 5.8.1 signature-policy-identifier
 type OtherHashAlgAndValue struct {
-	HashAlgorithm *cms.AlgorithmIdentifier
+	HashAlgorithm cms.AlgorithmIdentifier
 	HashValue     []byte
 }
 
 // RFC5126 5.8.1 signature-policy-identifier
 type SignaturePolicyIdentifier struct {
-	SigPolicyId   asn1.ObjectIdentifier
-	SigPolicyHash OtherHashAlgAndValue
+	SigPolicyId         asn1.ObjectIdentifier
+	SigPolicyHash       OtherHashAlgAndValue
+	SigPolicyQualifiers []SigPolicyQualifierInfo `asn1:"optional"`
+}
+
+type SigPolicyQualifierInfo struct {
+	SigPolicyQualifierID asn1.ObjectIdentifier
+	SigQualifier         string `asn1:"ia5"`
 }

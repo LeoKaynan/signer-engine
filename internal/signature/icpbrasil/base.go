@@ -2,12 +2,18 @@
 package icpbrasil
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/x509"
 	"embed"
 	"encoding/asn1"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -15,13 +21,14 @@ import (
 var icpBrasilRootFS embed.FS
 
 var (
-	icpBrasilRootsOnce sync.Once
-	icpBrasilRoots     *x509.CertPool
-	icpBrasilRootsErr  error
+	icpBrasilRootsPEMOnce sync.Once
+	icpBrasilRootsPEM     []byte
+	icpBrasilRootsPEMErr  error
 )
 
 type icpBrasilBase struct {
-	rootPool func() (*x509.CertPool, error)
+	rootPEM       func() ([]byte, error)
+	validateChain func(cert *x509.Certificate, chain []*x509.Certificate, rootsPEM []byte) error
 }
 
 func (p icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain []*x509.Certificate) error {
@@ -30,27 +37,30 @@ func (p icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain 
 	}
 
 	// DOC-ICP-04.01 Versão 5.0
-	if !subjectHasOID(cert, oidSubjectCPF) &&
-		!subjectHasOID(cert, oidSubjectCNPJ) {
-		return errors.New("certificate subject does not contain CPF or CNPJ")
-	}
-
-	// DOC-ICP-04.01 Versão 5.0
 	if !hasPolicyWithPrefix(cert, oidCertificatePolicyICPBRasilPrefix) {
 		return errors.New("certificate policies extension does not contain ICP-Brasil prefix")
 	}
 
-	rootPool := p.rootPool
-	if rootPool == nil {
-		rootPool = icpBrasilRootPool
+	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("certificate key usage does not allow digital signature")
 	}
 
-	roots, err := rootPool()
+	rootPEM := p.rootPEM
+	if rootPEM == nil {
+		rootPEM = icpBrasilRootPEM
+	}
+
+	rootsPEM, err := rootPEM()
 	if err != nil {
-		return fmt.Errorf("failed to get icp brasil root pool: %w", err)
+		return fmt.Errorf("failed to get icp brasil roots: %w", err)
 	}
 
-	if err := validateChain(cert, chain, roots); err != nil {
+	validateChain := p.validateChain
+	if validateChain == nil {
+		validateChain = validateChainWithOpenSSL
+	}
+
+	if err := validateChain(cert, chain, rootsPEM); err != nil {
 		return fmt.Errorf("failed to validate chain: %w", err)
 	}
 
@@ -61,16 +71,15 @@ func (icpBrasilBase) MandatedHashAlg() crypto.Hash {
 	return crypto.SHA256
 }
 
-func icpBrasilRootPool() (*x509.CertPool, error) {
-	icpBrasilRootsOnce.Do(func() {
-		icpBrasilRoots = x509.NewCertPool()
-
+func icpBrasilRootPEM() ([]byte, error) {
+	icpBrasilRootsPEMOnce.Do(func() {
 		entries, err := icpBrasilRootFS.ReadDir("roots")
 		if err != nil {
-			icpBrasilRootsErr = fmt.Errorf("failed to read icp-brasil-certs-root directory: %w", err)
+			icpBrasilRootsPEMErr = fmt.Errorf("failed to read icp-brasil-certs-root directory: %w", err)
 			return
 		}
 
+		var roots bytes.Buffer
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
@@ -78,58 +87,114 @@ func icpBrasilRootPool() (*x509.CertPool, error) {
 
 			pemBytes, err := icpBrasilRootFS.ReadFile("roots/" + entry.Name())
 			if err != nil {
-				icpBrasilRootsErr = fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+				icpBrasilRootsPEMErr = fmt.Errorf("failed to read %s: %w", entry.Name(), err)
 				return
 			}
 
-			if ok := icpBrasilRoots.AppendCertsFromPEM(pemBytes); !ok {
-				icpBrasilRootsErr = fmt.Errorf("failed to append certificate from %s", entry.Name())
+			if !containsPEMCertificate(pemBytes) {
+				icpBrasilRootsPEMErr = fmt.Errorf("failed to read certificate PEM from %s", entry.Name())
 				return
+			}
+
+			roots.Write(pemBytes)
+			if !bytes.HasSuffix(pemBytes, []byte("\n")) {
+				roots.WriteByte('\n')
 			}
 		}
+
+		icpBrasilRootsPEM = roots.Bytes()
 	})
 
-	return icpBrasilRoots, icpBrasilRootsErr
+	return icpBrasilRootsPEM, icpBrasilRootsPEMErr
 }
 
-func validateChain(cert *x509.Certificate, chain []*x509.Certificate, roots *x509.CertPool) error {
-	intermediates := x509.NewCertPool()
+func containsPEMCertificate(data []byte) bool {
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			return false
+		}
+		if block.Type == "CERTIFICATE" {
+			return true
+		}
+		data = rest
+	}
+}
 
-	for _, intermediate := range chain {
-		if intermediate == nil {
+func validateChainWithOpenSSL(cert *x509.Certificate, chain []*x509.Certificate, rootsPEM []byte) error {
+	if len(rootsPEM) == 0 {
+		return errors.New("root certificates are required")
+	}
+
+	dir, err := os.MkdirTemp("", "signer-engine-icpbrasil-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	signerPath := filepath.Join(dir, "signer.pem")
+	intermediatesPath := filepath.Join(dir, "intermediates.pem")
+	rootsPath := filepath.Join(dir, "roots.pem")
+
+	if err := os.WriteFile(signerPath, certificateToPEM(cert), 0o600); err != nil {
+		return fmt.Errorf("failed to write signer certificate: %w", err)
+	}
+
+	intermediatesPEM := certificatesToPEM(chain)
+	hasIntermediates := len(intermediatesPEM) > 0
+	if hasIntermediates {
+		if err := os.WriteFile(intermediatesPath, intermediatesPEM, 0o600); err != nil {
+			return fmt.Errorf("failed to write intermediate certificates: %w", err)
+		}
+	}
+
+	if err := os.WriteFile(rootsPath, rootsPEM, 0o600); err != nil {
+		return fmt.Errorf("failed to write root certificates: %w", err)
+	}
+
+	args := []string{
+		"verify",
+		"-purpose", "any",
+		"-CAfile", rootsPath,
+	}
+	if hasIntermediates {
+		args = append(args, "-untrusted", intermediatesPath)
+	}
+	args = append(args, signerPath)
+
+	cmd := exec.Command("openssl", args...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return errors.New(message)
+	}
+
+	return nil
+}
+
+func certificatesToPEM(certs []*x509.Certificate) []byte {
+	var out bytes.Buffer
+	for _, cert := range certs {
+		if cert == nil {
 			continue
 		}
-
-		intermediates.AddCert(intermediate)
+		out.Write(certificateToPEM(cert))
 	}
-
-	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return errors.New("certificate key usage does not allow digital signature")
-	}
-
-	_, err := cert.Verify(x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	})
-
-	return err
+	return out.Bytes()
 }
 
-func subjectHasOID(cert *x509.Certificate, oid asn1.ObjectIdentifier) bool {
-	for _, name := range cert.Subject.Names {
-		if name.Type.Equal(oid) {
-			return true
-		}
+func certificateToPEM(cert *x509.Certificate) []byte {
+	if cert == nil {
+		return nil
 	}
-
-	for _, name := range cert.Subject.ExtraNames {
-		if name.Type.Equal(oid) {
-			return true
-		}
-	}
-
-	return false
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
 }
 
 func hasPolicyWithPrefix(cert *x509.Certificate, prefix asn1.ObjectIdentifier) bool {

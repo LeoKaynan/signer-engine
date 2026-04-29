@@ -1,29 +1,18 @@
 package icpbrasil
 
 import (
-	"encoding/asn1"
-	"fmt"
+	_ "embed"
+
 	"signer-engine/internal/signature/cades"
-	"signer-engine/internal/signature/cms"
 )
 
-type adrbPolicy struct {
-	icpBrasilBase
-}
+//go:embed policies/PA_AD_RB_v2_4.der
+var adrbPolicyDER []byte
 
 func PolicyADRB() cades.Policy {
-	return adrbPolicy{}
-}
-
-func (adrbPolicy) Identifier() asn1.ObjectIdentifier {
-	return oidPolicyADRB
-}
-
-func (p adrbPolicy) SignedAttributes() []cms.Attribute {
-	attr, err := cades.PolicyIdentifierAttribute(p.Identifier(), adrbPolicyDocHash)
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal policy identifier attribute: %v", err))
+	return cadesPolicy{
+		oid:      oidPolicyADRB,
+		artifact: adrbPolicyDER,
+		uri:      "http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4.der",
 	}
-
-	return []cms.Attribute{attr}
 }

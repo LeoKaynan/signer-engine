@@ -46,16 +46,25 @@ func SigningCertificateV2Attribute(cert *x509.Certificate) (cms.Attribute, error
 	}, nil
 }
 
-func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte) (cms.Attribute, error) {
+func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte, uri string) (cms.Attribute, error) {
 	payload := SignaturePolicyIdentifier{
 		SigPolicyId: policyOID,
 		SigPolicyHash: OtherHashAlgAndValue{
-			HashAlgorithm: &cms.AlgorithmIdentifier{
+			HashAlgorithm: cms.AlgorithmIdentifier{
 				Algorithm:  cryptoutil.OIDSHA256,
 				Parameters: asn1.NullRawValue,
 			},
 			HashValue: hash,
 		},
+	}
+
+	if uri != "" {
+		payload.SigPolicyQualifiers = []SigPolicyQualifierInfo{
+			{
+				SigPolicyQualifierID: OIDSignaturePolicyQualifierURI,
+				SigQualifier:         uri,
+			},
+		}
 	}
 
 	der, err := asn1.Marshal(payload)

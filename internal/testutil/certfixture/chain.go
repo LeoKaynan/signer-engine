@@ -108,14 +108,6 @@ func WithLeaf(mutator func(*x509.Certificate)) Option {
 	}
 }
 
-func WithCPF(cpf string) Option {
-	return WithSubjectName(OIDSubjectCPF, cpf)
-}
-
-func WithCNPJ(cnpj string) Option {
-	return WithSubjectName(OIDSubjectCNPJ, cnpj)
-}
-
 func WithSubjectName(oid asn1.ObjectIdentifier, value string) Option {
 	return func(cfg *config) {
 		previous := cfg.mutateLeaf
