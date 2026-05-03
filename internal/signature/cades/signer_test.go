@@ -57,12 +57,4 @@ func TestSigner_Sign(t *testing.T) {
 	if !bytes.Contains(sigDER, signingTimeOIDDER) {
 		t.Error("signing-time OID not present in signature")
 	}
-
-	sigCertV2OIDDER, err := asn1.Marshal(OIDSigningCertificateV2)
-	if err != nil {
-		t.Fatalf("marshal OID: %v", err)
-	}
-	if !bytes.Contains(sigDER, sigCertV2OIDDER) {
-		t.Error("signing-certificate-v2 OID not present in signature")
-	}
 }

@@ -4,11 +4,16 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"signer-engine/internal/cryptoutil"
 	"signer-engine/internal/signature/cms"
 	"time"
 )
+
+type AttributeName string
+
+const SigningTimeAttr AttributeName = "signingTime"
 
 func SigningTimeAttribute(t time.Time) (cms.Attribute, error) {
 	der, err := asn1.Marshal(t.UTC())
@@ -23,6 +28,8 @@ func SigningTimeAttribute(t time.Time) (cms.Attribute, error) {
 		},
 	}, nil
 }
+
+const SigningCertificateV2Attr AttributeName = "signingCertificateV2Attribute"
 
 func SigningCertificateV2Attribute(cert *x509.Certificate) (cms.Attribute, error) {
 	certificateHash := sha256.Sum256(cert.Raw)
@@ -45,6 +52,8 @@ func SigningCertificateV2Attribute(cert *x509.Certificate) (cms.Attribute, error
 		},
 	}, nil
 }
+
+const PolicyIdentifierAttr AttributeName = "policyIdentifier"
 
 func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte, uri string) (cms.Attribute, error) {
 	payload := SignaturePolicyIdentifier{
@@ -76,6 +85,21 @@ func PolicyIdentifierAttribute(policyOID asn1.ObjectIdentifier, hash []byte, uri
 		AttrType: OIDSignaturePolicyID,
 		AttrValues: []asn1.RawValue{
 			{FullBytes: der},
+		},
+	}, nil
+}
+
+const SignatureTimeStampTokenAttr AttributeName = "signatureTimeStampToken"
+
+func SignatureTimeStampTokenAttribute(tokenDER []byte) (cms.Attribute, error) {
+	if len(tokenDER) == 0 {
+		return cms.Attribute{}, errors.New("token is empty")
+	}
+
+	return cms.Attribute{
+		AttrType: OIDSignatureTimeStampToken,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: tokenDER},
 		},
 	}, nil
 }

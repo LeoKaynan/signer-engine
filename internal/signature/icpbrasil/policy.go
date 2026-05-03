@@ -9,53 +9,55 @@ import (
 	"signer-engine/internal/signature/cms"
 )
 
+var _ cades.Policy = (*cadesPolicy)(nil)
+
 type cadesPolicy struct {
 	icpBrasilBase
 
-	oid      asn1.ObjectIdentifier
-	artifact []byte
-	uri      string
+	info PolicyInfo
 }
 
 func (p cadesPolicy) Identifier() asn1.ObjectIdentifier {
-	return p.oid
+	return p.info.OID
 }
 
-func (p cadesPolicy) SignedAttributes() []cms.Attribute {
-	digest, err := policyDigestFromDER(p.artifact)
-	if err != nil {
-		panic(fmt.Sprintf("failed to extract policy digest: %v", err))
+func (p cadesPolicy) SignedAttributes(ctx cades.SigningContext) ([]cms.Attribute, error) {
+	if ctx.Certificate == nil {
+		return nil, errors.New("certificate is required")
 	}
 
-	attr, err := cades.PolicyIdentifierAttribute(p.Identifier(), digest, p.uri)
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal policy identifier attribute: %v", err))
-	}
+	attrs := []cms.Attribute{}
 
-	return []cms.Attribute{attr}
-}
-
-// DOC-ICP-15.03 Versão 9.1 PAG 10 - ETSI TR 102 272 6 Signature policy specification in ASN.1 PAG 12
-func policyDigestFromDER(data []byte) ([]byte, error) {
-	var outer asn1.RawValue
-	if _, err := asn1.Unmarshal(data, &outer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal policy DER: %w", err)
-	}
-	rest := outer.Bytes
-	for i := range 2 {
-		var ignored asn1.RawValue
-		var err error
-		rest, err = asn1.Unmarshal(rest, &ignored)
-		if err != nil {
-			return nil, fmt.Errorf("failed to skip policy header sequence %d: %w", i+1, err)
+	for _, required := range p.info.RequiredAttributes {
+		switch required {
+		case cades.SigningCertificateV2Attr:
+			attr, err := cades.SigningCertificateV2Attribute(ctx.Certificate)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal signing certificate v2 attribute: %w", err)
+			}
+			attrs = append(attrs, attr)
+		case cades.PolicyIdentifierAttr:
+			attr, err := cades.PolicyIdentifierAttribute(p.Identifier(), p.info.Hash, p.info.URI)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal policy identifier attribute: %w", err)
+			}
+			attrs = append(attrs, attr)
+		default:
+			return nil, fmt.Errorf("unsupported attribute: %s", required)
 		}
 	}
-	var digest []byte
-	if _, err := asn1.Unmarshal(rest, &digest); err != nil {
-		return nil, fmt.Errorf("failed to extract policy digest: %w", err)
+
+	return attrs, nil
+}
+
+func (p cadesPolicy) UnsignedAttributeNames() []cades.AttributeName {
+	return append([]cades.AttributeName(nil), p.info.RequiredUnsignedAttributes...)
+}
+
+func NewPolicy(name cades.PolicyName) (cades.Policy, error) {
+	info, ok := policies[name]
+	if !ok {
+		return nil, fmt.Errorf("policy not found: %s", name)
 	}
-	if len(digest) == 0 {
-		return nil, errors.New("empty policy digest")
-	}
-	return digest, nil
+	return &cadesPolicy{info: info}, nil
 }

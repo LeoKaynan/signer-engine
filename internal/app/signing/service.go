@@ -3,11 +3,27 @@ package signing
 import (
 	"crypto"
 	"fmt"
+	"os"
+	"signer-engine/internal/act"
 	"signer-engine/internal/signature/cades"
+	"signer-engine/internal/signature/icpbrasil"
 	"signer-engine/internal/signer"
 )
 
-type Service struct{}
+type Service struct {
+	TimeStampProvider act.Provider
+}
+
+func NewFromEnv() Service {
+	return Service{
+		TimeStampProvider: act.NewSerproClient(act.SerproConfig{
+			TokenURL:     os.Getenv("SERPRO_ACT_TOKEN_URL"),
+			StampURL:     os.Getenv("SERPRO_ACT_STAMP_URL"),
+			ClientID:     os.Getenv("SERPRO_ACT_CLIENT_ID"),
+			ClientSecret: os.Getenv("SERPRO_ACT_CLIENT_SECRET"),
+		}),
+	}
+}
 
 func (s Service) Sign(request Request) (Response, error) {
 	credential, err := credentialResolver(request)
@@ -24,21 +40,22 @@ func (s Service) Sign(request Request) (Response, error) {
 }
 
 func (s Service) signCades(request Request, credential signer.Credential) (Response, error) {
-	policy, err := cadesPolicyResolver(request.Policy)
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to resolve policy: %w", err)
-	}
-
 	detached, err := cadesModeResolver(request.Mode)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to resolve mode: %w", err)
 	}
 
+	policy, err := icpbrasil.NewPolicy(request.Policy)
+	if err != nil {
+		return Response{}, fmt.Errorf("failed to resolve policy: %w", err)
+	}
+
 	signer := cades.Signer{
-		Credential: credential,
-		Policy:     policy,
-		Detached:   detached,
-		HashAlg:    crypto.SHA256,
+		Credential:        credential,
+		Policy:            policy,
+		Detached:          detached,
+		HashAlg:           crypto.SHA256,
+		TimeStampProvider: s.TimeStampProvider,
 	}
 
 	signature, err := signer.Sign(request.Data)

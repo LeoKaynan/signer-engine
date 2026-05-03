@@ -1,3 +1,6 @@
+include .env
+export
+
 BINARY := signer-engine
 CMD := ./cmd/signer-engine
 TMP_DIR := tmp
@@ -7,7 +10,7 @@ OUTPUT ?= $(TMP_DIR)/signature.p7s
 P12 ?= $(TMP_DIR)/cert.pfx
 PASSWORD ?= 199516
 FORMAT ?= cades
-POLICY ?= icpbrasil-adrb
+POLICY ?= PA_AD_RT_v2_4
 MODE ?= attached
 
 .PHONY: sign

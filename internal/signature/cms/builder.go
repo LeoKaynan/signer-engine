@@ -8,11 +8,19 @@ import (
 	"signer-engine/internal/signer"
 )
 
+type UnsignedAttributeContext struct {
+	Signature []byte
+	HashAlg   crypto.Hash
+}
+
+type UnsignedAttributeBuilder func(ctx UnsignedAttributeContext) ([]Attribute, error)
+
 type Builder struct {
-	Credential            signer.Credential
-	HashAlg               crypto.Hash
-	Detached              bool
-	ExtraSignedAttributes []Attribute
+	Credential               signer.Credential
+	HashAlg                  crypto.Hash
+	Detached                 bool
+	ExtraSignedAttributes    []Attribute
+	UnsignedAttributeBuilder UnsignedAttributeBuilder
 }
 
 func (b *Builder) Build(data []byte) ([]byte, error) {
@@ -63,6 +71,17 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
 
+	var unsignedAttrs []Attribute
+	if b.UnsignedAttributeBuilder != nil {
+		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
+			Signature: signature,
+			HashAlg:   b.HashAlg,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build unsigned attributes: %w", err)
+		}
+	}
+
 	signerInfo := SignerInfo{
 		// RFC5652 5.3 SignerInfo Type
 		// version is the syntax version number. If the SignerIdentifier is
@@ -85,7 +104,8 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 			Algorithm:  cryptoutil.OIDRSAEncryption,
 			Parameters: asn1.NullRawValue,
 		},
-		Signature: signature,
+		Signature:     signature,
+		UnsignedAttrs: unsignedAttrs,
 	}
 
 	certificates := []asn1.RawValue{

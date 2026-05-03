@@ -9,6 +9,7 @@ Normas, documentos da ICP-Brasil e RFCs usadas no contexto de assinatura digital
 
 ## RFCs
 
+- [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161.html) — Internet X.509 Public Key Infrastructure Time-Stamp Protocol (TSP)
 - [RFC 3279](https://www.rfc-editor.org/rfc/rfc3279) — Algorithms and Identifiers for the Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile
 - [RFC 4055](https://www.rfc-editor.org/rfc/rfc4055) — Additional Algorithms and Identifiers for RSA Cryptography for use in the Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile
 - [RFC 5035](https://www.rfc-editor.org/rfc/rfc5035) — Enhanced Security Services (ESS) Update: Adding CertID Algorithm Agility

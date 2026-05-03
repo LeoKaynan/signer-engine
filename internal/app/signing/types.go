@@ -1,17 +1,13 @@
 package signing
 
+import "signer-engine/internal/signature/cades"
+
 type Format string
 
 const (
 	FormatCades Format = "cades"
 	FormatPades Format = "pades"
 	FormatXades Format = "xades"
-)
-
-type Policy string
-
-const (
-	PolicyICPBRasilADRB Policy = "icpbrasil-adrb"
 )
 
 type Mode string
@@ -35,7 +31,7 @@ type Request struct {
 	PKCS12Pass         string
 
 	Format Format
-	Policy Policy
+	Policy cades.PolicyName
 	Mode   Mode
 }
 

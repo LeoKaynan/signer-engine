@@ -11,4 +11,7 @@ var (
 
 	// RFC5126 5.8.1 id-spq-ets-uri - DOC-ICP-15.03 Versão 9.1 PAG 21
 	OIDSignaturePolicyQualifierURI = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 5, 1}
+
+	// RFC3161 APPENDIX A - Signature Time-stamp attribute using CMS
+	OIDSignatureTimeStampToken = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 14}
 )

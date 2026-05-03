@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"signer-engine/internal/app/signing"
+	"signer-engine/internal/signature/cades"
 )
 
 func main() {
@@ -61,13 +62,13 @@ func runSign(args []string) error {
 		return fmt.Errorf("read credential file: %w", err)
 	}
 
-	response, err := signing.Service{}.Sign(signing.Request{
+	response, err := signing.NewFromEnv().Sign(signing.Request{
 		Data:               data,
 		CredentialProvider: signing.CredentialProvider(*credentialProvider),
 		PKCS12Data:         p12Data,
 		PKCS12Pass:         *password,
 		Format:             signing.Format(*format),
-		Policy:             signing.Policy(*policy),
+		Policy:             cades.PolicyName(*policy),
 		Mode:               signing.Mode(*mode),
 	})
 	if err != nil {
