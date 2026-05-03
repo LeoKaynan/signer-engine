@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"signer-engine/internal/act"
+	"signer-engine/internal/tsa"
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/cms"
 	"signer-engine/internal/testutil/certfixture"
@@ -69,7 +69,7 @@ type fakeTimeStampProvider struct {
 	hashAlg crypto.Hash
 }
 
-func (p *fakeTimeStampProvider) Stamp(ctx context.Context, input []byte, hashAlg crypto.Hash) (*act.TimestampToken, error) {
+func (p *fakeTimeStampProvider) Stamp(ctx context.Context, input []byte, hashAlg crypto.Hash) (*tsa.TimestampToken, error) {
 	p.input = append([]byte(nil), input...)
 	p.hashAlg = hashAlg
 
@@ -89,7 +89,7 @@ func (p *fakeTimeStampProvider) Stamp(ctx context.Context, input []byte, hashAlg
 		return nil, err
 	}
 
-	return &act.TimestampToken{TokenDER: tokenDER}, nil
+	return &tsa.TimestampToken{TokenDER: tokenDER}, nil
 }
 
 func TestSigner_SignWithSignatureTimeStamp(t *testing.T) {

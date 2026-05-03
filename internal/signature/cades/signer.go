@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto"
 	"fmt"
-	"signer-engine/internal/act"
+	"signer-engine/internal/tsa"
 	"signer-engine/internal/signature/cms"
 	"signer-engine/internal/signer"
 	"time"
@@ -15,7 +15,7 @@ type Signer struct {
 	HashAlg           crypto.Hash
 	Detached          bool
 	Policy            Policy
-	TimeStampProvider act.Provider
+	TimeStampProvider tsa.Provider
 	Now               func() time.Time
 }
 

@@ -4,19 +4,19 @@ import (
 	"crypto"
 	"fmt"
 	"os"
-	"signer-engine/internal/act"
+	"signer-engine/internal/tsa"
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/icpbrasil"
 	"signer-engine/internal/signer"
 )
 
 type Service struct {
-	TimeStampProvider act.Provider
+	TimeStampProvider tsa.Provider
 }
 
 func NewFromEnv() Service {
 	return Service{
-		TimeStampProvider: act.NewSerproClient(act.SerproConfig{
+		TimeStampProvider: tsa.NewSerproClient(tsa.SerproConfig{
 			TokenURL:     os.Getenv("SERPRO_ACT_TOKEN_URL"),
 			StampURL:     os.Getenv("SERPRO_ACT_STAMP_URL"),
 			ClientID:     os.Getenv("SERPRO_ACT_CLIENT_ID"),
