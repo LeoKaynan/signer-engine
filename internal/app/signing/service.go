@@ -4,14 +4,16 @@ import (
 	"crypto"
 	"fmt"
 	"os"
-	"signer-engine/internal/tsa"
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/icpbrasil"
 	"signer-engine/internal/signer"
+	"signer-engine/internal/tsa"
+	"signer-engine/internal/validation"
 )
 
 type Service struct {
-	TimeStampProvider tsa.Provider
+	TimeStampProvider  tsa.Provider
+	ValidationProvider validation.Provider
 }
 
 func NewFromEnv() Service {
@@ -22,6 +24,7 @@ func NewFromEnv() Service {
 			ClientID:     os.Getenv("SERPRO_ACT_CLIENT_ID"),
 			ClientSecret: os.Getenv("SERPRO_ACT_CLIENT_SECRET"),
 		}),
+		ValidationProvider: validation.CRLProvider{},
 	}
 }
 
@@ -51,11 +54,12 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 	}
 
 	signer := cades.Signer{
-		Credential:        credential,
-		Policy:            policy,
-		Detached:          detached,
-		HashAlg:           crypto.SHA256,
-		TimeStampProvider: s.TimeStampProvider,
+		Credential:         credential,
+		Policy:             policy,
+		Detached:           detached,
+		HashAlg:            crypto.SHA256,
+		TimeStampProvider:  s.TimeStampProvider,
+		ValidationProvider: s.ValidationProvider,
 	}
 
 	signature, err := signer.Sign(request.Data)

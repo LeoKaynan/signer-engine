@@ -10,6 +10,7 @@ import (
 const (
 	PolicyNamePAADRBv24 cades.PolicyName = "PA_AD_RB_v2_4"
 	PolicyNamePAADRTv24 cades.PolicyName = "PA_AD_RT_v2_4"
+	PolicyNamePAADRVv24 cades.PolicyName = "PA_AD_RV_v2_4"
 )
 
 type PolicyInfo struct {
@@ -51,6 +52,26 @@ var policies = map[cades.PolicyName]PolicyInfo{
 		},
 		RequiredUnsignedAttributes: []cades.AttributeName{
 			cades.SignatureTimeStampTokenAttr,
+		},
+	},
+	PolicyNamePAADRVv24: {
+		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 3, 2, 4},
+		Hash: []byte{
+			0xac, 0x8d, 0x32, 0x99, 0x18, 0x9a, 0x58, 0xf8,
+			0x8e, 0xc9, 0x38, 0xd1, 0xb5, 0x91, 0x8f, 0x65,
+			0xbd, 0x9d, 0x1b, 0x22, 0xe1, 0xd1, 0xa3, 0x2b,
+			0x99, 0x8f, 0x3f, 0xdf, 0x07, 0xec, 0x33, 0x42,
+		},
+		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RV_v2_4.der",
+		RequiredAttributes: []cades.AttributeName{
+			cades.SigningCertificateV2Attr,
+			cades.PolicyIdentifierAttr,
+		},
+		RequiredUnsignedAttributes: []cades.AttributeName{
+			cades.SignatureTimeStampTokenAttr,
+			cades.CertificateRefsAttr,
+			cades.RevocationRefsAttr,
+			cades.EscTimeStampAttr,
 		},
 	},
 }

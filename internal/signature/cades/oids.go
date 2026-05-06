@@ -14,4 +14,13 @@ var (
 
 	// RFC3161 APPENDIX A - Signature Time-stamp attribute using CMS
 	OIDSignatureTimeStampToken = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 14}
+
+	// RFC5126 6.2.1 complete-certificate-references Attribute Definition
+	OIDCertificateRefs = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 21}
+
+	// RFC5126 6.2.2 complete-revocation-references Attribute Definition
+	OIDRevocationRefs = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 22}
+
+	// RFC5126 6.3.5 CAdES-C-time-stamp Attribute Definition
+	OIDEscTimeStamp = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 25}
 )

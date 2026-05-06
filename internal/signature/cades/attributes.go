@@ -103,3 +103,46 @@ func SignatureTimeStampTokenAttribute(tokenDER []byte) (cms.Attribute, error) {
 		},
 	}, nil
 }
+
+const CertificateRefsAttr AttributeName = "certificateRefs"
+
+func CertificateRefsAttribute(refsDER []byte) (cms.Attribute, error) {
+	if len(refsDER) == 0 {
+		return cms.Attribute{}, errors.New("refs are empty")
+	}
+
+	return cms.Attribute{
+		AttrType: OIDCertificateRefs,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: refsDER},
+		},
+	}, nil
+}
+
+const RevocationRefsAttr AttributeName = "revocationRefs"
+
+func RevocationRefsAttribute(refsDER []byte) (cms.Attribute, error) {
+	if len(refsDER) == 0 {
+		return cms.Attribute{}, errors.New("revocation refs are empty")
+	}
+	return cms.Attribute{
+		AttrType: OIDRevocationRefs,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: refsDER},
+		},
+	}, nil
+}
+
+const EscTimeStampAttr AttributeName = "escTimeStamp"
+
+func EscTimeStampAttribute(tokenDER []byte) (cms.Attribute, error) {
+	if len(tokenDER) == 0 {
+		return cms.Attribute{}, errors.New("esc timestamp token is empty")
+	}
+	return cms.Attribute{
+		AttrType: OIDEscTimeStamp,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: tokenDER},
+		},
+	}, nil
+}
