@@ -14,6 +14,8 @@ type Provider interface {
 }
 
 type Refs struct {
-	CertificateRefs []byte
-	RevocationRefs  []byte
+	CertificateRefs   []byte
+	RevocationRefs    []byte
+	CertificateValues []byte
+	RevocationValues  []byte
 }

@@ -54,14 +54,31 @@ func (p CRLProvider) BuildRefs(ctx context.Context, cert *x509.Certificate, chai
 		return nil, fmt.Errorf("failed to build certificate refs: %w", err)
 	}
 
-	revocationRefsDER, err := p.BuildRevocationRefs(ctx, cert, chain)
+	certificateValuesDER, err := BuildCertificateValues(chain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build certificate values: %w", err)
+	}
+
+	crls, err := p.resolveRevocationLists(ctx, cert, chain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve revocation data: %w", err)
+	}
+
+	revocationRefsDER, err := buildRevocationRefs(crls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build revocation refs: %w", err)
 	}
 
+	revocationValuesDER, err := buildRevocationValues(crls)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build revocation values: %w", err)
+	}
+
 	return &Refs{
-		CertificateRefs: certificateRefsDER,
-		RevocationRefs:  revocationRefsDER,
+		CertificateRefs:   certificateRefsDER,
+		RevocationRefs:    revocationRefsDER,
+		CertificateValues: certificateValuesDER,
+		RevocationValues:  revocationValuesDER,
 	}, nil
 }
 
@@ -87,12 +104,39 @@ func BuildCertificateRefs(certs []*x509.Certificate) ([]byte, error) {
 	return der, nil
 }
 
+func BuildCertificateValues(certs []*x509.Certificate) ([]byte, error) {
+	values := make([]asn1.RawValue, 0, len(certs))
+	for _, cert := range certs {
+		if cert == nil {
+			return nil, errors.New("certificate values contains nil certificate")
+		}
+
+		values = append(values, asn1.RawValue{FullBytes: cert.Raw})
+	}
+
+	der, err := asn1.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal certificate values: %w", err)
+	}
+
+	return der, nil
+}
+
 func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) ([]byte, error) {
+	crls, err := p.resolveRevocationLists(ctx, cert, chain)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildRevocationRefs(crls)
+}
+
+func (p CRLProvider) resolveRevocationLists(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) ([]*x509.RevocationList, error) {
 	issuerCerts := append([]*x509.Certificate(nil), chain...)
 	issuerCerts = append(issuerCerts, p.Issuers...)
 
 	targetCerts := append([]*x509.Certificate{cert}, chain...)
-	crlIDs := make([]crlValidatedID, 0, len(p.CRLs))
+	resolvedCRLs := make([]*x509.RevocationList, 0, len(p.CRLs))
 	seenCRLs := map[string]struct{}{}
 
 	for _, target := range targetCerts {
@@ -122,20 +166,27 @@ func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certifi
 			continue
 		}
 		seenCRLs[key] = struct{}{}
+		resolvedCRLs = append(resolvedCRLs, crl)
+	}
+
+	if len(resolvedCRLs) == 0 {
+		return nil, errors.New("no matching CRL found for certificate chain")
+	}
+
+	return resolvedCRLs, nil
+}
+
+func buildRevocationRefs(crls []*x509.RevocationList) ([]byte, error) {
+	refs := make([]crlOcspRef, 0, len(crls))
+	for _, crl := range crls {
+		if crl == nil {
+			return nil, errors.New("revocation refs contains nil CRL")
+		}
 
 		crlID, err := newCRLValidatedID(crl)
 		if err != nil {
 			return nil, err
 		}
-		crlIDs = append(crlIDs, crlID)
-	}
-
-	if len(crlIDs) == 0 {
-		return nil, errors.New("no matching CRL found for certificate chain")
-	}
-
-	refs := make([]crlOcspRef, 0, len(crlIDs))
-	for _, crlID := range crlIDs {
 		refs = append(refs, crlOcspRef{
 			CRLIDs: crlListID{CRLs: []crlValidatedID{crlID}},
 		})
@@ -144,6 +195,25 @@ func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certifi
 	der, err := asn1.Marshal(refs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal complete revocation refs: %w", err)
+	}
+
+	return der, nil
+}
+
+func buildRevocationValues(crls []*x509.RevocationList) ([]byte, error) {
+	values := revocationValues{
+		CRLVals: make([]asn1.RawValue, 0, len(crls)),
+	}
+	for _, crl := range crls {
+		if crl == nil {
+			return nil, errors.New("revocation values contains nil CRL")
+		}
+		values.CRLVals = append(values.CRLVals, asn1.RawValue{FullBytes: crl.Raw})
+	}
+
+	der, err := asn1.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal revocation values: %w", err)
 	}
 
 	return der, nil
@@ -624,4 +694,8 @@ type crlIdentifier struct {
 	CRLIssuer     asn1.RawValue
 	CRLIssuedTime time.Time
 	CRLNumber     *big.Int `asn1:"optional"`
+}
+
+type revocationValues struct {
+	CRLVals []asn1.RawValue `asn1:"explicit,tag:0,optional"`
 }

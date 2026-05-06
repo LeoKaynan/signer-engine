@@ -146,3 +146,33 @@ func EscTimeStampAttribute(tokenDER []byte) (cms.Attribute, error) {
 		},
 	}, nil
 }
+
+const CertValuesAttr AttributeName = "certValues"
+
+func CertValuesAttribute(valuesDER []byte) (cms.Attribute, error) {
+	if len(valuesDER) == 0 {
+		return cms.Attribute{}, errors.New("cert values are empty")
+	}
+
+	return cms.Attribute{
+		AttrType: OIDCertValues,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: valuesDER},
+		},
+	}, nil
+}
+
+const RevocationValuesAttr AttributeName = "revocationValues"
+
+func RevocationValuesAttribute(valuesDER []byte) (cms.Attribute, error) {
+	if len(valuesDER) == 0 {
+		return cms.Attribute{}, errors.New("revocation values are empty")
+	}
+
+	return cms.Attribute{
+		AttrType: OIDRevocationValues,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: valuesDER},
+		},
+	}, nil
+}

@@ -23,4 +23,10 @@ var (
 
 	// RFC5126 6.3.5 CAdES-C-time-stamp Attribute Definition
 	OIDEscTimeStamp = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 25}
+
+	// RFC5126 6.3.3.  certificate-values Attribute Definition
+	OIDCertValues = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 23}
+
+	// RFC5126 6.3.4.  revocation-values Attribute Definition
+	OIDRevocationValues = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 24}
 )

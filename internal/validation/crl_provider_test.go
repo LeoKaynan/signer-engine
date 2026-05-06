@@ -50,6 +50,22 @@ func TestCRLProviderBuildRefs(t *testing.T) {
 	if len(revocationRefs[0].CRLIDs.CRLs[0].CRLHash.HashAlgorithm.Parameters.FullBytes) != 0 {
 		t.Fatal("expected revocation refs SHA-256 algorithm identifier without parameters")
 	}
+
+	var certificateValues []asn1.RawValue
+	if rest, err := asn1.Unmarshal(refs.CertificateValues, &certificateValues); err != nil || len(rest) != 0 {
+		t.Fatalf("unmarshal certificate values: rest=%x err=%v", rest, err)
+	}
+	if len(certificateValues) != 1 {
+		t.Fatalf("expected one certificate value, got %d", len(certificateValues))
+	}
+
+	var revocationValues revocationValues
+	if rest, err := asn1.Unmarshal(refs.RevocationValues, &revocationValues); err != nil || len(rest) != 0 {
+		t.Fatalf("unmarshal revocation values: rest=%x err=%v", rest, err)
+	}
+	if len(revocationValues.CRLVals) != 1 {
+		t.Fatalf("expected one revocation value, got %d", len(revocationValues.CRLVals))
+	}
 }
 
 func TestCRLProviderBuildRevocationRefsUsesOneCrlOcspRefPerCRL(t *testing.T) {

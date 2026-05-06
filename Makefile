@@ -10,7 +10,7 @@ OUTPUT ?= $(TMP_DIR)/signature.p7s
 P12 ?= $(TMP_DIR)/cert.pfx
 PASSWORD ?= 199516
 FORMAT ?= cades
-POLICY ?= PA_AD_RV_v2_4
+POLICY ?= PA_AD_RC_v2_4
 MODE ?= attached
 
 .PHONY: sign

@@ -49,7 +49,13 @@ func TimestampTokenCertificateInfo(tokenDER []byte) TimestampTokenCertificates {
 	}
 }
 
-func EnrichTimestampTokenWithRefs(tokenDER []byte, certRefsDER []byte, revRefsDER []byte) ([]byte, error) {
+func EnrichTimestampTokenWithRefs(
+	tokenDER []byte,
+	certRefsDER []byte,
+	revRefsDER []byte,
+	certValuesDER []byte,
+	revValuesDER []byte,
+) ([]byte, error) {
 	contentInfo, signedData, ok := parseTimestampSignedData(tokenDER)
 	if !ok || len(signedData.SignerInfos) == 0 {
 		return tokenDER, nil
@@ -64,14 +70,26 @@ func EnrichTimestampTokenWithRefs(tokenDER []byte, certRefsDER []byte, revRefsDE
 		return nil, err
 	}
 
+	attrs := []cms.Attribute{certRefsAttr, revRefsAttr}
+	if len(certValuesDER) > 0 && len(revValuesDER) > 0 {
+		certValuesAttr, err := CertValuesAttribute(certValuesDER)
+		if err != nil {
+			return nil, err
+		}
+		revValuesAttr, err := RevocationValuesAttribute(revValuesDER)
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, certValuesAttr, revValuesAttr)
+	}
+
 	// RFC 5126 6.2.1 and 6.2.2 specify that refs for TSUs that issued
 	// timestamp tokens are added to the relevant token's signedData as
 	// signerInfos unsignedAttrs.
 	// https://www.rfc-editor.org/rfc/rfc5126#section-6.2.1
 	signedData.SignerInfos[0].UnsignedAttrs = replaceUnsignedAttrs(
 		signedData.SignerInfos[0].UnsignedAttrs,
-		certRefsAttr,
-		revRefsAttr,
+		attrs...,
 	)
 
 	signedDataDER, err := asn1.Marshal(signedData)

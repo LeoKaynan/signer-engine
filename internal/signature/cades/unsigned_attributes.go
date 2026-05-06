@@ -23,6 +23,7 @@ func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
 			signer:                s,
 			ctx:                   ctx,
 			enrichTimestampTokens: requiresValidationRefs(names),
+			enrichTimestampValues: requiresValidationValues(names),
 		}
 		return builder.build(names)
 	}
@@ -40,12 +41,22 @@ func requiresValidationRefs(names []AttributeName) bool {
 	return false
 }
 
+func requiresValidationValues(names []AttributeName) bool {
+	for _, name := range names {
+		if name == CertValuesAttr || name == RevocationValuesAttr {
+			return true
+		}
+	}
+	return false
+}
+
 type unsignedAttributeBuild struct {
 	signer                *Signer
 	ctx                   cms.UnsignedAttributeContext
 	refs                  *validation.Refs
 	timestampCerts        []*x509.Certificate
 	enrichTimestampTokens bool
+	enrichTimestampValues bool
 }
 
 func (b *unsignedAttributeBuild) build(names []AttributeName) ([]cms.Attribute, error) {
@@ -74,6 +85,10 @@ func (b *unsignedAttributeBuild) buildOne(name AttributeName, previousAttrs []cm
 		return b.revocationRefs()
 	case EscTimeStampAttr:
 		return b.escTimeStamp(previousAttrs)
+	case CertValuesAttr:
+		return b.certValues()
+	case RevocationValuesAttr:
+		return b.revocationValues()
 	default:
 		return cms.Attribute{}, fmt.Errorf("unsupported unsigned attribute: %s", name)
 	}
@@ -133,6 +148,8 @@ func (b *unsignedAttributeBuild) validationRefs() (*validation.Refs, error) {
 	slog.Info("cades: validation refs built",
 		"certificate_refs", len(refs.CertificateRefs),
 		"revocation_refs", len(refs.RevocationRefs),
+		"certificate_values", len(refs.CertificateValues),
+		"revocation_values", len(refs.RevocationValues),
 	)
 	return refs, nil
 }
@@ -160,6 +177,34 @@ func (b *unsignedAttributeBuild) revocationRefs() (cms.Attribute, error) {
 	attr, err := RevocationRefsAttribute(refs.RevocationRefs)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to marshal revocation refs attribute: %w", err)
+	}
+
+	return attr, nil
+}
+
+func (b *unsignedAttributeBuild) certValues() (cms.Attribute, error) {
+	refs, err := b.validationRefs()
+	if err != nil {
+		return cms.Attribute{}, err
+	}
+
+	attr, err := CertValuesAttribute(refs.CertificateValues)
+	if err != nil {
+		return cms.Attribute{}, fmt.Errorf("failed to marshal cert values attribute: %w", err)
+	}
+
+	return attr, nil
+}
+
+func (b *unsignedAttributeBuild) revocationValues() (cms.Attribute, error) {
+	refs, err := b.validationRefs()
+	if err != nil {
+		return cms.Attribute{}, err
+	}
+
+	attr, err := RevocationValuesAttribute(refs.RevocationValues)
+	if err != nil {
+		return cms.Attribute{}, fmt.Errorf("failed to marshal revocation values attribute: %w", err)
 	}
 
 	return attr, nil
@@ -231,13 +276,27 @@ func (b *unsignedAttributeBuild) enrichTimestampToken(tokenDER []byte) ([]byte, 
 	// in the signedData of the relevant timestamp token, under signerInfos
 	// unsignedAttrs. The TSA signature is preserved because these attributes
 	// are unsigned CMS attributes.
-	enriched, err := EnrichTimestampTokenWithRefs(tokenDER, refs.CertificateRefs, refs.RevocationRefs)
+	var certValuesDER, revocationValuesDER []byte
+	if b.enrichTimestampValues {
+		certValuesDER = refs.CertificateValues
+		revocationValuesDER = refs.RevocationValues
+	}
+
+	enriched, err := EnrichTimestampTokenWithRefs(
+		tokenDER,
+		refs.CertificateRefs,
+		refs.RevocationRefs,
+		certValuesDER,
+		revocationValuesDER,
+	)
 	if err != nil {
 		return nil, err
 	}
 	slog.Info("cades: timestamp token enriched",
 		"certificate_refs", len(refs.CertificateRefs),
 		"revocation_refs", len(refs.RevocationRefs),
+		"certificate_values", len(certValuesDER),
+		"revocation_values", len(revocationValuesDER),
 	)
 
 	return enriched, nil

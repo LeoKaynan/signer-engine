@@ -248,8 +248,10 @@ func (p *fakeValidationProvider) BuildRefs(ctx context.Context, cert *x509.Certi
 	}
 
 	return &validation.Refs{
-		CertificateRefs: certRefsDER,
-		RevocationRefs:  revocationRefsDER,
+		CertificateRefs:   certRefsDER,
+		RevocationRefs:    revocationRefsDER,
+		CertificateValues: certRefsDER,
+		RevocationValues:  revocationRefsDER,
 	}, nil
 }
 
@@ -399,5 +401,58 @@ func TestSigner_SignWithEscTimeStamp(t *testing.T) {
 	}
 	if count := bytes.Count(sigDER, revocationRefsOIDDER); count != 3 {
 		t.Fatalf("expected revocation refs on outer signer and both timestamp tokens, got %d", count)
+	}
+}
+
+func TestSigner_SignWithArchivalValues(t *testing.T) {
+	credential := certfixture.NewCredential(t)
+	timestampCredential := certfixture.NewCredential(t)
+	policy := policyfixture.Policy{
+		UnsignedAttrs: []cades.AttributeName{
+			cades.SignatureTimeStampTokenAttr,
+			cades.CertificateRefsAttr,
+			cades.RevocationRefsAttr,
+			cades.EscTimeStampAttr,
+			cades.CertValuesAttr,
+			cades.RevocationValuesAttr,
+		},
+	}
+	timeStampProvider := &fakeTimeStampProvider{
+		certs: []*x509.Certificate{timestampCredential.Certificate()},
+	}
+	validationProvider := &fakeValidationProvider{}
+
+	cadesSigner := cades.Signer{
+		Credential:         credential,
+		HashAlg:            crypto.SHA256,
+		Detached:           false,
+		Policy:             policy,
+		TimeStampProvider:  timeStampProvider,
+		ValidationProvider: validationProvider,
+	}
+
+	sigDER, err := cadesSigner.Sign([]byte("Hello, CAdES AD-RC!"))
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+
+	if validationProvider.calls != 3 {
+		t.Fatalf("expected validation provider to be called three times, got %d", validationProvider.calls)
+	}
+
+	certValuesOIDDER, err := asn1.Marshal(cades.OIDCertValues)
+	if err != nil {
+		t.Fatalf("marshal cert values OID: %v", err)
+	}
+	if count := bytes.Count(sigDER, certValuesOIDDER); count != 3 {
+		t.Fatalf("expected cert values on outer signer and both timestamp tokens, got %d", count)
+	}
+
+	revocationValuesOIDDER, err := asn1.Marshal(cades.OIDRevocationValues)
+	if err != nil {
+		t.Fatalf("marshal revocation values OID: %v", err)
+	}
+	if count := bytes.Count(sigDER, revocationValuesOIDDER); count != 3 {
+		t.Fatalf("expected revocation values on outer signer and both timestamp tokens, got %d", count)
 	}
 }
