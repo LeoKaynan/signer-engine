@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"encoding/asn1"
 	"fmt"
+	"log/slog"
 	"signer-engine/internal/cryptoutil"
 	"signer-engine/internal/signer"
 )
@@ -24,9 +25,16 @@ type Builder struct {
 }
 
 func (b *Builder) Build(data []byte) ([]byte, error) {
+	slog.Info("cms: building signed data",
+		"hash", b.HashAlg.String(),
+		"detached", b.Detached,
+		"data_bytes", len(data),
+	)
+
 	dataHash := b.HashAlg.New()
 	dataHash.Write(data)
 	messageDigest := dataHash.Sum(nil)
+	slog.Info("cms: message digest calculated", "bytes", len(messageDigest))
 
 	messageDigestValueDER, err := asn1.Marshal(messageDigest)
 	if err != nil {
@@ -54,6 +62,10 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	}
 
 	signedAttrs = append(signedAttrs, b.ExtraSignedAttributes...)
+	slog.Info("cms: signed attributes prepared",
+		"count", len(signedAttrs),
+		"extra", len(b.ExtraSignedAttributes),
+	)
 
 	// RFC5652 5.4 Message Digest Calculation Process
 	// The IMPLICIT [0] tag in the signedAttrs is not used for the DER encoding, rather an EXPLICIT SET OF tag is used.
@@ -61,18 +73,22 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message digest attribute: %w", err)
 	}
+	slog.Info("cms: signed attributes marshaled", "bytes", len(signedAttrsDER))
 
 	toBeSignedHash := b.HashAlg.New()
 	toBeSignedHash.Write(signedAttrsDER)
 	toBeSignedBytes := toBeSignedHash.Sum(nil)
 
+	slog.Info("cms: signing authenticated attributes")
 	signature, err := b.Credential.Sign(toBeSignedBytes, b.HashAlg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
+	slog.Info("cms: authenticated attributes signed", "signature_bytes", len(signature))
 
 	var unsignedAttrs []Attribute
 	if b.UnsignedAttributeBuilder != nil {
+		slog.Info("cms: building unsigned attributes")
 		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
 			Signature: signature,
 			HashAlg:   b.HashAlg,
@@ -80,6 +96,9 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to build unsigned attributes: %w", err)
 		}
+		slog.Info("cms: unsigned attributes built", "count", len(unsignedAttrs))
+	} else {
+		slog.Info("cms: no unsigned attributes configured")
 	}
 
 	signerInfo := SignerInfo{
@@ -143,6 +162,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal signed data: %w", err)
 	}
+	slog.Info("cms: signed data marshaled", "bytes", len(signedDataBytes))
 
 	contentInfo := ContentInfo{
 		ContentType: OIDSignedData,
@@ -158,6 +178,7 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal content info: %w", err)
 	}
+	slog.Info("cms: content info marshaled", "bytes", len(contentInfoBytes))
 
 	return contentInfoBytes, nil
 }

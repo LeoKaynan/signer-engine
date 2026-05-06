@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,6 +63,10 @@ func (c *SerproClient) Stamp(ctx context.Context, input []byte, hashAlg crypto.H
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
+	slog.Info("tsa: using Serpro TSA",
+		"hash", hashAlg.String(),
+		"input_bytes", len(input),
+	)
 
 	accessToken, err := c.accessTokenValue(ctx)
 	if err != nil {
@@ -72,6 +77,7 @@ func (c *SerproClient) Stamp(ctx context.Context, input []byte, hashAlg crypto.H
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("tsa: timestamp request built", "request_bytes", len(requestDER))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.stampURL, bytes.NewReader(requestDER))
 	if err != nil {
@@ -94,11 +100,13 @@ func (c *SerproClient) Stamp(ctx context.Context, input []byte, hashAlg crypto.H
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("serpro timestamp endpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	slog.Info("tsa: timestamp response received", "status", resp.StatusCode, "response_bytes", len(body))
 
 	tokenDER, err := decodeTimestampResponse(body, resp.Header.Get("Content-Type"))
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("tsa: timestamp token extracted", "token_bytes", len(tokenDER))
 
 	return &TimestampToken{TokenDER: tokenDER}, nil
 }
@@ -124,9 +132,11 @@ func (c *SerproClient) accessTokenValue(ctx context.Context) (string, error) {
 	defer c.mu.Unlock()
 
 	if c.accessToken != "" && time.Now().Before(c.expiresAt.Add(-30*time.Second)) {
+		slog.Info("tsa: using cached access token")
 		return c.accessToken, nil
 	}
 
+	slog.Info("tsa: requesting access token")
 	values := url.Values{}
 	values.Set("grant_type", "client_credentials")
 
@@ -170,6 +180,7 @@ func (c *SerproClient) accessTokenValue(ctx context.Context) (string, error) {
 
 	c.accessToken = payload.AccessToken
 	c.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	slog.Info("tsa: access token cached", "expires_in_seconds", expiresIn)
 
 	return c.accessToken, nil
 }

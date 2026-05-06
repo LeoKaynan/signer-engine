@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 
 	"signer-engine/internal/signature/cms"
 	"signer-engine/internal/validation"
@@ -11,9 +12,11 @@ import (
 
 func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
 	if s.Policy == nil || len(s.Policy.UnsignedAttributeNames()) == 0 {
+		slog.Info("cades: no unsigned attributes required")
 		return nil
 	}
 	names := s.Policy.UnsignedAttributeNames()
+	slog.Info("cades: unsigned attributes required", "count", len(names), "names", names)
 
 	return func(ctx cms.UnsignedAttributeContext) ([]cms.Attribute, error) {
 		builder := unsignedAttributeBuild{
@@ -49,11 +52,13 @@ func (b *unsignedAttributeBuild) build(names []AttributeName) ([]cms.Attribute, 
 	var attrs []cms.Attribute
 
 	for _, name := range names {
+		slog.Info("cades: building unsigned attribute", "name", name)
 		attr, err := b.buildOne(name, attrs)
 		if err != nil {
 			return nil, err
 		}
 		attrs = append(attrs, attr)
+		slog.Info("cades: unsigned attribute built", "name", name)
 	}
 
 	return attrs, nil
@@ -79,6 +84,7 @@ func (b *unsignedAttributeBuild) signatureTimeStampToken() (cms.Attribute, error
 		return cms.Attribute{}, fmt.Errorf("time stamp provider is required")
 	}
 
+	slog.Info("cades: requesting signature timestamp")
 	token, err := b.signer.TimeStampProvider.Stamp(
 		context.Background(),
 		b.ctx.Signature,
@@ -87,6 +93,7 @@ func (b *unsignedAttributeBuild) signatureTimeStampToken() (cms.Attribute, error
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to stamp signature: %w", err)
 	}
+	slog.Info("cades: signature timestamp received", "bytes", len(token.TokenDER))
 
 	tokenDER, err := b.enrichTimestampToken(token.TokenDER)
 	if err != nil {
@@ -103,6 +110,7 @@ func (b *unsignedAttributeBuild) signatureTimeStampToken() (cms.Attribute, error
 
 func (b *unsignedAttributeBuild) validationRefs() (*validation.Refs, error) {
 	if b.refs != nil {
+		slog.Info("cades: reusing validation refs")
 		return b.refs, nil
 	}
 	if b.signer.ValidationProvider == nil {
@@ -111,6 +119,7 @@ func (b *unsignedAttributeBuild) validationRefs() (*validation.Refs, error) {
 
 	chain := appendCertificateSet(b.signer.Credential.Chain(), b.timestampCerts...)
 
+	slog.Info("cades: building validation refs", "chain_certs", len(chain))
 	refs, err := b.signer.ValidationProvider.BuildRefs(
 		context.Background(),
 		b.signer.Credential.Certificate(),
@@ -121,6 +130,10 @@ func (b *unsignedAttributeBuild) validationRefs() (*validation.Refs, error) {
 	}
 
 	b.refs = refs
+	slog.Info("cades: validation refs built",
+		"certificate_refs", len(refs.CertificateRefs),
+		"revocation_refs", len(refs.RevocationRefs),
+	)
 	return refs, nil
 }
 
@@ -157,11 +170,13 @@ func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cm
 		return cms.Attribute{}, fmt.Errorf("time stamp provider is required")
 	}
 
+	slog.Info("cades: building esc timestamp input", "previous_unsigned_attrs", len(previousAttrs))
 	input, err := EscTimeStampInput(b.ctx.Signature, previousAttrs)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to build esc timestamp input: %w", err)
 	}
 
+	slog.Info("cades: requesting esc timestamp", "input_bytes", len(input))
 	token, err := b.signer.TimeStampProvider.Stamp(
 		context.Background(),
 		input,
@@ -170,6 +185,7 @@ func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cm
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to stamp esc timestamp input: %w", err)
 	}
+	slog.Info("cades: esc timestamp received", "bytes", len(token.TokenDER))
 
 	tokenDER, err := b.enrichTimestampToken(token.TokenDER)
 	if err != nil {
@@ -187,18 +203,21 @@ func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cm
 func (b *unsignedAttributeBuild) enrichTimestampToken(tokenDER []byte) ([]byte, error) {
 	info := TimestampTokenCertificateInfo(tokenDER)
 	if info.Signer == nil {
+		slog.Info("cades: timestamp token has no signer certificate info")
 		return tokenDER, nil
 	}
 
 	b.timestampCerts = appendCertificateSet(b.timestampCerts, info.All...)
 
 	if !b.enrichTimestampTokens {
+		slog.Info("cades: timestamp token enrichment not required")
 		return tokenDER, nil
 	}
 	if b.signer.ValidationProvider == nil {
 		return nil, fmt.Errorf("validation provider is required")
 	}
 
+	slog.Info("cades: building timestamp validation refs", "chain_certs", len(info.Chain))
 	refs, err := b.signer.ValidationProvider.BuildRefs(
 		context.Background(),
 		info.Signer,
@@ -216,6 +235,10 @@ func (b *unsignedAttributeBuild) enrichTimestampToken(tokenDER []byte) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("cades: timestamp token enriched",
+		"certificate_refs", len(refs.CertificateRefs),
+		"revocation_refs", len(refs.RevocationRefs),
+	)
 
 	return enriched, nil
 }

@@ -3,6 +3,7 @@ package signing
 import (
 	"crypto"
 	"fmt"
+	"log/slog"
 	"os"
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/icpbrasil"
@@ -29,10 +30,18 @@ func NewFromEnv() Service {
 }
 
 func (s Service) Sign(request Request) (Response, error) {
+	slog.Info("signing: starting",
+		"format", request.Format,
+		"policy", request.Policy,
+		"mode", request.Mode,
+		"data_bytes", len(request.Data),
+	)
+
 	credential, err := credentialResolver(request)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to resolve credential: %w", err)
 	}
+	slog.Info("signing: credential resolved", "provider", request.CredentialProvider)
 
 	switch request.Format {
 	case FormatCades:
@@ -47,11 +56,13 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to resolve mode: %w", err)
 	}
+	slog.Info("signing: CAdES mode resolved", "detached", detached)
 
 	policy, err := icpbrasil.NewPolicy(request.Policy)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to resolve policy: %w", err)
 	}
+	slog.Info("signing: policy resolved", "name", request.Policy, "oid", policy.Identifier())
 
 	signer := cades.Signer{
 		Credential:         credential,
@@ -66,6 +77,7 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to sign: %w", err)
 	}
+	slog.Info("signing: signature completed", "bytes", len(signature))
 
 	return Response{Signature: signature}, nil
 }

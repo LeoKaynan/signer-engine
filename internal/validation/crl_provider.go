@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os"
@@ -39,7 +40,14 @@ func (p CRLProvider) BuildRefs(ctx context.Context, cert *x509.Certificate, chai
 		return nil, errors.New("signing certificate is required")
 	}
 
+	slog.Info("validation: building refs",
+		"subject", cert.Subject.String(),
+		"provided_chain_certs", len(chain),
+		"provided_issuers", len(p.Issuers),
+		"provided_crls", len(p.CRLs),
+	)
 	chain = p.completeChain(ctx, cert, chain)
+	slog.Info("validation: certificate chain ready", "chain_certs", len(chain))
 
 	certificateRefsDER, err := BuildCertificateRefs(chain)
 	if err != nil {
@@ -92,11 +100,16 @@ func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certifi
 			return nil, errors.New("certificate chain contains nil certificate")
 		}
 
+		slog.Info("validation: resolving CRL for certificate",
+			"subject", target.Subject.String(),
+			"distribution_points", len(target.CRLDistributionPoints),
+		)
 		crl, issuer, ok, err := p.crlForCertificate(ctx, target, issuerCerts)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
+			slog.Info("validation: no CRL resolved for certificate", "subject", target.Subject.String())
 			continue
 		}
 		if err := p.validateCRL(crl, issuer); err != nil {
@@ -105,6 +118,7 @@ func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certifi
 
 		key := string(crl.Raw)
 		if _, ok := seenCRLs[key]; ok {
+			slog.Info("validation: CRL already referenced", "issuer", issuer.Subject.String())
 			continue
 		}
 		seenCRLs[key] = struct{}{}
@@ -138,11 +152,16 @@ func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certifi
 func (p CRLProvider) crlForCertificate(ctx context.Context, target *x509.Certificate, issuers []*x509.Certificate) (*x509.RevocationList, *x509.Certificate, bool, error) {
 	crl, issuer, ok := findProvidedCRLForCertificate(target, p.CRLs, issuers)
 	if ok {
+		slog.Info("validation: using provided CRL",
+			"subject", target.Subject.String(),
+			"issuer", issuer.Subject.String(),
+		)
 		return crl, issuer, true, nil
 	}
 
 	issuer, ok = findIssuerForCertificate(target, issuers)
 	if !ok {
+		slog.Info("validation: issuer certificate not found", "subject", target.Subject.String())
 		return nil, nil, false, nil
 	}
 
@@ -187,8 +206,17 @@ func (p CRLProvider) completeChain(ctx context.Context, cert *x509.Certificate, 
 	issuers := appendCertificateSet(completed, p.Issuers...)
 	current := cert
 
+	if len(chain) > 0 {
+		slog.Info("validation: using certificates extracted from credential chain", "chain_certs", len(chain))
+	}
+
 	for depth := 0; depth < 5 && current != nil; depth++ {
 		if issuer, ok := findIssuerForCertificate(current, issuers); ok {
+			slog.Info("validation: issuer found in available certificates",
+				"subject", current.Subject.String(),
+				"issuer", issuer.Subject.String(),
+				"depth", depth,
+			)
 			if bytes.Equal(issuer.RawSubject, issuer.RawIssuer) {
 				break
 			}
@@ -198,8 +226,20 @@ func (p CRLProvider) completeChain(ctx context.Context, cert *x509.Certificate, 
 
 		fetched, err := p.fetchIssuerCertificates(ctx, current)
 		if err != nil || len(fetched) == 0 {
+			if err != nil {
+				slog.Info("validation: failed to fetch issuer certificates via AIA",
+					"subject", current.Subject.String(),
+					"error", err.Error(),
+				)
+			} else {
+				slog.Info("validation: no issuer certificates fetched via AIA", "subject", current.Subject.String())
+			}
 			break
 		}
+		slog.Info("validation: issuer certificates fetched via AIA",
+			"subject", current.Subject.String(),
+			"count", len(fetched),
+		)
 
 		var next *x509.Certificate
 		for _, issuer := range fetched {
@@ -222,11 +262,21 @@ func (p CRLProvider) completeChain(ctx context.Context, cert *x509.Certificate, 
 }
 
 func (p CRLProvider) fetchIssuerCertificates(ctx context.Context, cert *x509.Certificate) ([]*x509.Certificate, error) {
+	if len(cert.IssuingCertificateURL) == 0 {
+		slog.Info("validation: certificate has no AIA issuer URL", "subject", cert.Subject.String())
+		return nil, nil
+	}
+
 	var lastErr error
 	for _, uri := range cert.IssuingCertificateURL {
+		slog.Info("validation: fetching issuer certificates from AIA", "uri", uri)
 		certs, err := p.fetchCertificatesFromURI(ctx, uri)
 		if err == nil && len(certs) > 0 {
+			slog.Info("validation: issuer certificates downloaded from AIA", "uri", uri, "count", len(certs))
 			return certs, nil
+		}
+		if err != nil {
+			slog.Info("validation: issuer certificate AIA fetch failed", "uri", uri, "error", err.Error())
 		}
 		lastErr = err
 	}
@@ -263,6 +313,7 @@ func (p CRLProvider) fetchCertificatesFromURI(ctx context.Context, uri string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse issuer certificates %q: %w", uri, err)
 	}
+	slog.Info("validation: issuer certificates parsed", "uri", uri, "count", len(certs), "bytes", len(body))
 
 	return certs, nil
 }
@@ -271,9 +322,11 @@ func (p CRLProvider) fetchCRL(ctx context.Context, cert *x509.Certificate, issue
 	var lastErr error
 	for _, uri := range cert.CRLDistributionPoints {
 		if crl, ok := p.cachedCRL(uri, issuer); ok {
+			slog.Info("validation: using cached CRL", "uri", uri, "issuer", issuer.Subject.String())
 			return crl, nil
 		}
 
+		slog.Info("validation: fetching CRL", "uri", uri, "issuer", issuer.Subject.String())
 		crl, err := p.fetchCRLFromURI(ctx, uri)
 		if err == nil {
 			if err := p.validateCRL(crl, issuer); err != nil {
@@ -283,6 +336,7 @@ func (p CRLProvider) fetchCRL(ctx context.Context, cert *x509.Certificate, issue
 			p.cacheCRL(uri, crl.Raw)
 			return crl, nil
 		}
+		slog.Info("validation: CRL fetch failed", "uri", uri, "error", err.Error())
 		lastErr = err
 	}
 	return nil, lastErr
@@ -293,17 +347,22 @@ func (p CRLProvider) cachedCRL(uri string, issuer *x509.Certificate) (*x509.Revo
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Info("validation: CRL cache read failed", "uri", uri, "path", path, "error", err.Error())
+		}
 		return nil, false
 	}
 
 	crl, err := parseCRL(data)
 	if err != nil {
 		_ = os.Remove(path)
+		slog.Info("validation: removed invalid CRL cache entry", "uri", uri, "path", path)
 		return nil, false
 	}
 
 	if err := p.validateCRL(crl, issuer); err != nil {
 		_ = os.Remove(path)
+		slog.Info("validation: removed stale CRL cache entry", "uri", uri, "path", path, "error", err.Error())
 		return nil, false
 	}
 
@@ -317,9 +376,14 @@ func (p CRLProvider) cacheCRL(uri string, der []byte) {
 
 	path := p.cachePath(uri)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		slog.Info("validation: failed to create CRL cache directory", "uri", uri, "path", path, "error", err.Error())
 		return
 	}
-	_ = os.WriteFile(path, der, 0o644)
+	if err := os.WriteFile(path, der, 0o644); err != nil {
+		slog.Info("validation: failed to add CRL to cache", "uri", uri, "path", path, "error", err.Error())
+		return
+	}
+	slog.Info("validation: added CRL to cache", "uri", uri, "path", path, "bytes", len(der))
 }
 
 func (p CRLProvider) cachePath(uri string) string {
@@ -396,6 +460,7 @@ func (p CRLProvider) fetchCRLFromURI(ctx context.Context, uri string) (*x509.Rev
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse CRL %q: %w", uri, err)
 	}
+	slog.Info("validation: CRL downloaded", "uri", uri, "bytes", len(body))
 
 	return crl, nil
 }
