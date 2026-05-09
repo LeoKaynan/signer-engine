@@ -79,12 +79,6 @@ internal/signature/icpbrasil
 
 ICP-Brasil policy implementation and certificate validation.
 
-```text
-internal/testutil/certfixture
-```
-
-Go-only certificate and credential fixtures used by tests.
-
 ## Tests
 
 Run all tests:
