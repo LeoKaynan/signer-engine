@@ -12,13 +12,13 @@ import (
 )
 
 type Signer struct {
-	Credential         signer.Credential
-	HashAlg            crypto.Hash
-	Detached           bool
-	Policy             Policy
-	TimeStampProvider  tsa.Provider
-	ValidationProvider validation.Provider
-	Now                func() time.Time
+	Credential             signer.Credential
+	HashAlg                crypto.Hash
+	Detached               bool
+	Policy                 Policy
+	TimeStampProvider      tsa.Provider
+	TrustMaterialExtractor validation.TrustMaterialExtractor
+	Now                    func() time.Time
 }
 
 func (s *Signer) now() time.Time {

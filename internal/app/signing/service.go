@@ -13,8 +13,8 @@ import (
 )
 
 type Service struct {
-	TimeStampProvider  tsa.Provider
-	ValidationProvider validation.Provider
+	TimeStampProvider      tsa.Provider
+	TrustMaterialExtractor validation.TrustMaterialExtractor
 }
 
 func NewFromEnv() Service {
@@ -25,7 +25,7 @@ func NewFromEnv() Service {
 			ClientID:     os.Getenv("SERPRO_ACT_CLIENT_ID"),
 			ClientSecret: os.Getenv("SERPRO_ACT_CLIENT_SECRET"),
 		}),
-		ValidationProvider: validation.CRLProvider{},
+		TrustMaterialExtractor: validation.CRLTrustMaterialExtractor{},
 	}
 }
 
@@ -65,12 +65,12 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 	slog.Info("signing: policy resolved", "name", request.Policy, "oid", policy.Identifier())
 
 	signer := cades.Signer{
-		Credential:         credential,
-		Policy:             policy,
-		Detached:           detached,
-		HashAlg:            crypto.SHA256,
-		TimeStampProvider:  s.TimeStampProvider,
-		ValidationProvider: s.ValidationProvider,
+		Credential:             credential,
+		Policy:                 policy,
+		Detached:               detached,
+		HashAlg:                crypto.SHA256,
+		TimeStampProvider:      s.TimeStampProvider,
+		TrustMaterialExtractor: s.TrustMaterialExtractor,
 	}
 
 	signature, err := signer.Sign(request.Data)

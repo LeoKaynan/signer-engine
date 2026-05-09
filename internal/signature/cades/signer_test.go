@@ -15,6 +15,7 @@ import (
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/cms"
 	"signer-engine/internal/testutil/certfixture"
+	"signer-engine/internal/testutil/crlfixture"
 	"signer-engine/internal/testutil/policyfixture"
 	"signer-engine/internal/tsa"
 	"signer-engine/internal/validation"
@@ -222,55 +223,66 @@ func TestSigner_SignWithSignatureTimeStampRequiresProvider(t *testing.T) {
 	}
 }
 
-type fakeValidationProvider struct {
+type fakeTrustMaterialExtractor struct {
 	calls  int
 	cert   *x509.Certificate
 	chain  []*x509.Certificate
 	certs  []*x509.Certificate
 	chains [][]*x509.Certificate
+	crls   []*x509.RevocationList
+	tsa    *validation.TrustMaterial
 }
 
-func (p *fakeValidationProvider) BuildRefs(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) (*validation.Refs, error) {
+func (p *fakeTrustMaterialExtractor) FromCertificate(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) (*validation.TrustMaterial, error) {
 	p.calls++
 	p.cert = cert
 	p.chain = append([]*x509.Certificate(nil), chain...)
 	p.certs = append(p.certs, cert)
 	p.chains = append(p.chains, append([]*x509.Certificate(nil), chain...))
 
-	certRefsDER, err := asn1.Marshal([]byte("certificate-refs"))
-	if err != nil {
-		return nil, err
+	return &validation.TrustMaterial{
+		Leaf:  cert,
+		Chain: append([]*x509.Certificate(nil), chain...),
+		CRLs:  append([]*x509.RevocationList(nil), p.crls...),
+	}, nil
+}
+
+func (p *fakeTrustMaterialExtractor) FromTimestampToken(ctx context.Context, tokenDER []byte) (*validation.TrustMaterial, error) {
+	p.calls++
+	if p.tsa == nil {
+		return nil, nil
 	}
 
-	revocationRefsDER, err := asn1.Marshal([]byte("revocation-refs"))
-	if err != nil {
-		return nil, err
-	}
+	chain := append([]*x509.Certificate(nil), p.tsa.Chain...)
+	p.certs = append(p.certs, p.tsa.Leaf)
+	p.chains = append(p.chains, chain)
 
-	return &validation.Refs{
-		CertificateRefs:   certRefsDER,
-		RevocationRefs:    revocationRefsDER,
-		CertificateValues: certRefsDER,
-		RevocationValues:  revocationRefsDER,
+	return &validation.TrustMaterial{
+		Leaf:  p.tsa.Leaf,
+		Chain: chain,
+		CRLs:  append([]*x509.RevocationList(nil), p.tsa.CRLs...),
 	}, nil
 }
 
 func TestSigner_SignWithValidationRefs(t *testing.T) {
 	credential := certfixture.NewCredential(t)
+	revocationFixture := crlfixture.New(t)
 	policy := policyfixture.Policy{
 		UnsignedAttrs: []cades.AttributeName{
 			cades.CertificateRefsAttr,
 			cades.RevocationRefsAttr,
 		},
 	}
-	validationProvider := &fakeValidationProvider{}
+	extractor := &fakeTrustMaterialExtractor{
+		crls: []*x509.RevocationList{revocationFixture.LeafCRL},
+	}
 
 	cadesSigner := cades.Signer{
-		Credential:         credential,
-		HashAlg:            crypto.SHA256,
-		Detached:           false,
-		Policy:             policy,
-		ValidationProvider: validationProvider,
+		Credential:             credential,
+		HashAlg:                crypto.SHA256,
+		Detached:               false,
+		Policy:                 policy,
+		TrustMaterialExtractor: extractor,
 	}
 
 	sigDER, err := cadesSigner.Sign([]byte("Hello, CAdES AD-RV!"))
@@ -278,14 +290,14 @@ func TestSigner_SignWithValidationRefs(t *testing.T) {
 		t.Fatalf("Sign failed: %v", err)
 	}
 
-	if validationProvider.calls != 1 {
-		t.Fatalf("expected validation provider to be called once, got %d", validationProvider.calls)
+	if extractor.calls != 1 {
+		t.Fatalf("expected extractor to be called once, got %d", extractor.calls)
 	}
-	if validationProvider.cert == nil {
-		t.Fatal("expected validation provider to receive signer certificate")
+	if extractor.cert == nil {
+		t.Fatal("expected extractor to receive signer certificate")
 	}
-	if len(validationProvider.chain) == 0 {
-		t.Fatal("expected validation provider to receive certificate chain")
+	if len(extractor.chain) == 0 {
+		t.Fatal("expected extractor to receive certificate chain")
 	}
 
 	certificateRefsOIDDER, err := asn1.Marshal(cades.OIDCertificateRefs)
@@ -324,7 +336,7 @@ func TestSigner_SignWithValidationRefsRequiresProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing validation provider error")
 	}
-	if !strings.Contains(err.Error(), "validation provider is required") {
+	if !strings.Contains(err.Error(), "trust material extractor is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -332,6 +344,7 @@ func TestSigner_SignWithValidationRefsRequiresProvider(t *testing.T) {
 func TestSigner_SignWithEscTimeStamp(t *testing.T) {
 	credential := certfixture.NewCredential(t)
 	timestampCredential := certfixture.NewCredential(t)
+	revocationFixture := crlfixture.New(t)
 	policy := policyfixture.Policy{
 		UnsignedAttrs: []cades.AttributeName{
 			cades.SignatureTimeStampTokenAttr,
@@ -343,15 +356,21 @@ func TestSigner_SignWithEscTimeStamp(t *testing.T) {
 	timeStampProvider := &fakeTimeStampProvider{
 		certs: []*x509.Certificate{timestampCredential.Certificate()},
 	}
-	validationProvider := &fakeValidationProvider{}
+	extractor := &fakeTrustMaterialExtractor{
+		crls: []*x509.RevocationList{revocationFixture.LeafCRL},
+		tsa: &validation.TrustMaterial{
+			Leaf: timestampCredential.Certificate(),
+			CRLs: []*x509.RevocationList{revocationFixture.LeafCRL},
+		},
+	}
 
 	cadesSigner := cades.Signer{
-		Credential:         credential,
-		HashAlg:            crypto.SHA256,
-		Detached:           false,
-		Policy:             policy,
-		TimeStampProvider:  timeStampProvider,
-		ValidationProvider: validationProvider,
+		Credential:             credential,
+		HashAlg:                crypto.SHA256,
+		Detached:               false,
+		Policy:                 policy,
+		TimeStampProvider:      timeStampProvider,
+		TrustMaterialExtractor: extractor,
 	}
 
 	sigDER, err := cadesSigner.Sign([]byte("Hello, CAdES AD-RV!"))
@@ -368,10 +387,10 @@ func TestSigner_SignWithEscTimeStamp(t *testing.T) {
 	if len(timeStampProvider.inputs[1]) <= len(timeStampProvider.inputs[0]) {
 		t.Fatal("expected esc timestamp input to include signature and previous unsigned attributes")
 	}
-	if validationProvider.calls != 3 {
-		t.Fatalf("expected validation provider to be called three times, got %d", validationProvider.calls)
+	if extractor.calls != 3 {
+		t.Fatalf("expected extractor to be called three times, got %d", extractor.calls)
 	}
-	externalChain := validationProvider.chains[1]
+	externalChain := extractor.chains[1]
 	if len(externalChain) != len(credential.Chain())+1 {
 		t.Fatalf("expected validation chain to include timestamp certificate, got %d", len(externalChain))
 	}
@@ -404,9 +423,77 @@ func TestSigner_SignWithEscTimeStamp(t *testing.T) {
 	}
 }
 
+func TestSigner_SignWithArchivalValuesWithoutRefsIncludesTimestampCertificate(t *testing.T) {
+	credential := certfixture.NewCredential(t)
+	timestampCredential := certfixture.NewCredential(t)
+	revocationFixture := crlfixture.New(t)
+	policy := policyfixture.Policy{
+		UnsignedAttrs: []cades.AttributeName{
+			cades.SignatureTimeStampTokenAttr,
+			cades.CertValuesAttr,
+			cades.RevocationValuesAttr,
+		},
+	}
+	timeStampProvider := &fakeTimeStampProvider{
+		certs: []*x509.Certificate{timestampCredential.Certificate()},
+	}
+	extractor := &fakeTrustMaterialExtractor{
+		crls: []*x509.RevocationList{revocationFixture.LeafCRL},
+		tsa: &validation.TrustMaterial{
+			Leaf: timestampCredential.Certificate(),
+			CRLs: []*x509.RevocationList{revocationFixture.LeafCRL},
+		},
+	}
+
+	signer := cades.Signer{
+		Credential:             credential,
+		HashAlg:                crypto.SHA256,
+		Detached:               false,
+		Policy:                 policy,
+		TimeStampProvider:      timeStampProvider,
+		TrustMaterialExtractor: extractor,
+	}
+
+	sigDER, err := signer.Sign([]byte("Hello, CAdES AD-RC values only!"))
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+
+	if extractor.calls != 2 {
+		t.Fatalf("expected extractor to be called twice, got %d", extractor.calls)
+	}
+	if len(extractor.chains) < 2 {
+		t.Fatalf("expected timestamp and signer material calls, got %d", len(extractor.chains))
+	}
+	signerChain := extractor.chains[1]
+	if len(signerChain) != len(credential.Chain())+1 {
+		t.Fatalf("expected signer chain to include timestamp certificate, got %d", len(signerChain))
+	}
+	if !bytes.Equal(signerChain[len(signerChain)-1].Raw, timestampCredential.Certificate().Raw) {
+		t.Fatal("expected timestamp certificate to be appended to signer material chain")
+	}
+
+	certValuesOIDDER, err := asn1.Marshal(cades.OIDCertValues)
+	if err != nil {
+		t.Fatalf("marshal cert values OID: %v", err)
+	}
+	if count := bytes.Count(sigDER, certValuesOIDDER); count != 1 {
+		t.Fatalf("expected cert values only on outer signer, got %d", count)
+	}
+
+	revocationValuesOIDDER, err := asn1.Marshal(cades.OIDRevocationValues)
+	if err != nil {
+		t.Fatalf("marshal revocation values OID: %v", err)
+	}
+	if count := bytes.Count(sigDER, revocationValuesOIDDER); count != 1 {
+		t.Fatalf("expected revocation values only on outer signer, got %d", count)
+	}
+}
+
 func TestSigner_SignWithArchivalValues(t *testing.T) {
 	credential := certfixture.NewCredential(t)
 	timestampCredential := certfixture.NewCredential(t)
+	revocationFixture := crlfixture.New(t)
 	policy := policyfixture.Policy{
 		UnsignedAttrs: []cades.AttributeName{
 			cades.SignatureTimeStampTokenAttr,
@@ -420,15 +507,21 @@ func TestSigner_SignWithArchivalValues(t *testing.T) {
 	timeStampProvider := &fakeTimeStampProvider{
 		certs: []*x509.Certificate{timestampCredential.Certificate()},
 	}
-	validationProvider := &fakeValidationProvider{}
+	extractor := &fakeTrustMaterialExtractor{
+		crls: []*x509.RevocationList{revocationFixture.LeafCRL},
+		tsa: &validation.TrustMaterial{
+			Leaf: timestampCredential.Certificate(),
+			CRLs: []*x509.RevocationList{revocationFixture.LeafCRL},
+		},
+	}
 
 	cadesSigner := cades.Signer{
-		Credential:         credential,
-		HashAlg:            crypto.SHA256,
-		Detached:           false,
-		Policy:             policy,
-		TimeStampProvider:  timeStampProvider,
-		ValidationProvider: validationProvider,
+		Credential:             credential,
+		HashAlg:                crypto.SHA256,
+		Detached:               false,
+		Policy:                 policy,
+		TimeStampProvider:      timeStampProvider,
+		TrustMaterialExtractor: extractor,
 	}
 
 	sigDER, err := cadesSigner.Sign([]byte("Hello, CAdES AD-RC!"))
@@ -436,8 +529,8 @@ func TestSigner_SignWithArchivalValues(t *testing.T) {
 		t.Fatalf("Sign failed: %v", err)
 	}
 
-	if validationProvider.calls != 3 {
-		t.Fatalf("expected validation provider to be called three times, got %d", validationProvider.calls)
+	if extractor.calls != 3 {
+		t.Fatalf("expected extractor to be called three times, got %d", extractor.calls)
 	}
 
 	certValuesOIDDER, err := asn1.Marshal(cades.OIDCertValues)

@@ -3,7 +3,6 @@ package validation
 import (
 	"context"
 	"crypto/x509"
-	"encoding/asn1"
 	"net/http"
 	"net/http/httptest"
 	"signer-engine/internal/testutil/crlfixture"
@@ -12,94 +11,33 @@ import (
 	"time"
 )
 
-func TestCRLProviderBuildRefs(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificate(t *testing.T) {
 	fixture := crlfixture.New(t)
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		CRLs: []*x509.RevocationList{fixture.LeafCRL},
 		Now:  fixture.NowFunc(),
 	}
 
-	refs, err := provider.BuildRefs(
+	material, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},
 	)
 	if err != nil {
-		t.Fatalf("BuildRefs failed: %v", err)
+		t.Fatalf("FromCertificate failed: %v", err)
 	}
-
-	var certificateRefs []otherCertID
-	if rest, err := asn1.Unmarshal(refs.CertificateRefs, &certificateRefs); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal certificate refs: rest=%x err=%v", rest, err)
+	if material.Leaf == nil {
+		t.Fatal("expected leaf certificate")
 	}
-	if len(certificateRefs) != 1 {
-		t.Fatalf("expected one certificate ref, got %d", len(certificateRefs))
+	if len(material.Chain) != 1 {
+		t.Fatalf("expected one chain certificate, got %d", len(material.Chain))
 	}
-
-	var revocationRefs []crlOcspRef
-	if rest, err := asn1.Unmarshal(refs.RevocationRefs, &revocationRefs); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal revocation refs: rest=%x err=%v", rest, err)
-	}
-	if len(revocationRefs) != 1 || len(revocationRefs[0].CRLIDs.CRLs) != 1 {
-		t.Fatalf("expected one CRL ref, got %+v", revocationRefs)
-	}
-
-	if len(certificateRefs[0].OtherCertHash.HashAlgorithm.Parameters.FullBytes) != 0 {
-		t.Fatal("expected certificate refs SHA-256 algorithm identifier without parameters")
-	}
-	if len(revocationRefs[0].CRLIDs.CRLs[0].CRLHash.HashAlgorithm.Parameters.FullBytes) != 0 {
-		t.Fatal("expected revocation refs SHA-256 algorithm identifier without parameters")
-	}
-
-	var certificateValues []asn1.RawValue
-	if rest, err := asn1.Unmarshal(refs.CertificateValues, &certificateValues); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal certificate values: rest=%x err=%v", rest, err)
-	}
-	if len(certificateValues) != 1 {
-		t.Fatalf("expected one certificate value, got %d", len(certificateValues))
-	}
-
-	var revocationValues revocationValues
-	if rest, err := asn1.Unmarshal(refs.RevocationValues, &revocationValues); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal revocation values: rest=%x err=%v", rest, err)
-	}
-	if len(revocationValues.CRLVals) != 1 {
-		t.Fatalf("expected one revocation value, got %d", len(revocationValues.CRLVals))
+	if len(material.CRLs) != 1 {
+		t.Fatalf("expected one CRL, got %d", len(material.CRLs))
 	}
 }
 
-func TestCRLProviderBuildRevocationRefsUsesOneCrlOcspRefPerCRL(t *testing.T) {
-	fixture := crlfixture.New(t)
-	rootCRL := crlfixture.CreateCRL(t, fixture.Root, fixture.RootKey, fixture.Intermediate.SerialNumber, fixture.Now)
-	provider := CRLProvider{
-		CRLs: []*x509.RevocationList{fixture.LeafCRL, rootCRL},
-		Now:  fixture.NowFunc(),
-	}
-
-	revocationRefsDER, err := provider.BuildRevocationRefs(
-		context.Background(),
-		fixture.Leaf,
-		[]*x509.Certificate{fixture.Intermediate, fixture.Root},
-	)
-	if err != nil {
-		t.Fatalf("BuildRevocationRefs failed: %v", err)
-	}
-
-	var revocationRefs []crlOcspRef
-	if rest, err := asn1.Unmarshal(revocationRefsDER, &revocationRefs); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal revocation refs: rest=%x err=%v", rest, err)
-	}
-	if len(revocationRefs) != 2 {
-		t.Fatalf("expected one CrlOcspRef per CRL, got %d", len(revocationRefs))
-	}
-	for i, ref := range revocationRefs {
-		if len(ref.CRLIDs.CRLs) != 1 {
-			t.Fatalf("expected CrlOcspRef %d to contain one CRL, got %d", i, len(ref.CRLIDs.CRLs))
-		}
-	}
-}
-
-func TestCRLProviderBuildRefsFetchesCRLFromCertificateDistributionPoint(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateFetchesCRLFromDistributionPoint(t *testing.T) {
 	var crlDER []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/pkix-crl")
@@ -109,26 +47,26 @@ func TestCRLProviderBuildRefsFetchesCRLFromCertificateDistributionPoint(t *testi
 
 	fixture := crlfixture.New(t, server.URL+"/leaf.crl")
 	crlDER = fixture.LeafCRL.Raw
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		HTTPClient: server.Client(),
 		CacheDir:   t.TempDir(),
 		Now:        fixture.NowFunc(),
 	}
 
-	refs, err := provider.BuildRefs(
+	material, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},
 	)
 	if err != nil {
-		t.Fatalf("BuildRefs failed: %v", err)
+		t.Fatalf("FromCertificate failed: %v", err)
 	}
-	if len(refs.RevocationRefs) == 0 {
-		t.Fatal("expected revocation refs")
+	if len(material.CRLs) == 0 {
+		t.Fatal("expected revocation material")
 	}
 }
 
-func TestCRLProviderBuildRefsDiscoversIssuerFromAIA(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateDiscoversIssuerFromAIA(t *testing.T) {
 	fixture := crlfixture.New(t)
 
 	var leafCRLDER []byte
@@ -155,30 +93,25 @@ func TestCRLProviderBuildRefsDiscoversIssuerFromAIA(t *testing.T) {
 	leafCRL := crlfixture.CreateCRL(t, fixture.Intermediate, fixture.InterKey, leaf.SerialNumber, fixture.Now)
 	leafCRLDER = leafCRL.Raw
 
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		HTTPClient: server.Client(),
 		CacheDir:   t.TempDir(),
 		Now:        fixture.NowFunc(),
 	}
 
-	refs, err := provider.BuildRefs(context.Background(), leaf, nil)
+	material, err := extractor.FromCertificate(context.Background(), leaf, nil)
 	if err != nil {
-		t.Fatalf("BuildRefs failed: %v", err)
+		t.Fatalf("FromCertificate failed: %v", err)
 	}
-
-	var certificateRefs []otherCertID
-	if rest, err := asn1.Unmarshal(refs.CertificateRefs, &certificateRefs); err != nil || len(rest) != 0 {
-		t.Fatalf("unmarshal certificate refs: rest=%x err=%v", rest, err)
+	if len(material.Chain) != 1 {
+		t.Fatalf("expected discovered issuer in chain, got %d", len(material.Chain))
 	}
-	if len(certificateRefs) != 1 {
-		t.Fatalf("expected discovered issuer in certificate refs, got %d", len(certificateRefs))
-	}
-	if len(refs.RevocationRefs) == 0 {
-		t.Fatal("expected revocation refs")
+	if len(material.CRLs) == 0 {
+		t.Fatal("expected revocation material")
 	}
 }
 
-func TestCRLProviderBuildRefsUsesCachedCRL(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateUsesCachedCRL(t *testing.T) {
 	var calls int
 	var crlDER []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,20 +123,20 @@ func TestCRLProviderBuildRefsUsesCachedCRL(t *testing.T) {
 
 	fixture := crlfixture.New(t, server.URL+"/leaf.crl")
 	crlDER = fixture.LeafCRL.Raw
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		HTTPClient: server.Client(),
 		CacheDir:   t.TempDir(),
 		Now:        fixture.NowFunc(),
 	}
 
 	for range 2 {
-		_, err := provider.BuildRefs(
+		_, err := extractor.FromCertificate(
 			context.Background(),
 			fixture.Leaf,
 			[]*x509.Certificate{fixture.Intermediate},
 		)
 		if err != nil {
-			t.Fatalf("BuildRefs failed: %v", err)
+			t.Fatalf("FromCertificate failed: %v", err)
 		}
 	}
 
@@ -212,11 +145,11 @@ func TestCRLProviderBuildRefsUsesCachedCRL(t *testing.T) {
 	}
 }
 
-func TestCRLProviderBuildRefsRequiresDistributionPointOrProvidedCRL(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateRequiresDistributionPointOrProvidedCRL(t *testing.T) {
 	fixture := crlfixture.New(t)
-	provider := CRLProvider{Now: fixture.NowFunc()}
+	extractor := CRLTrustMaterialExtractor{Now: fixture.NowFunc()}
 
-	_, err := provider.BuildRefs(
+	_, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},
@@ -229,7 +162,7 @@ func TestCRLProviderBuildRefsRequiresDistributionPointOrProvidedCRL(t *testing.T
 	}
 }
 
-func TestCRLProviderBuildRefsRejectsInvalidCRLSignature(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateRejectsInvalidCRLSignature(t *testing.T) {
 	fixture := crlfixture.New(t)
 	invalidCRL := crlfixture.CreateCRL(
 		t,
@@ -238,12 +171,12 @@ func TestCRLProviderBuildRefsRejectsInvalidCRLSignature(t *testing.T) {
 		fixture.Leaf.SerialNumber,
 		fixture.Now,
 	)
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		CRLs: []*x509.RevocationList{invalidCRL},
 		Now:  fixture.NowFunc(),
 	}
 
-	_, err := provider.BuildRefs(
+	_, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},
@@ -256,16 +189,16 @@ func TestCRLProviderBuildRefsRejectsInvalidCRLSignature(t *testing.T) {
 	}
 }
 
-func TestCRLProviderBuildRefsRejectsExpiredCRL(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateRejectsExpiredCRL(t *testing.T) {
 	fixture := crlfixture.New(t)
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		CRLs: []*x509.RevocationList{fixture.LeafCRL},
 		Now: func() time.Time {
 			return fixture.LeafCRL.NextUpdate.Add(time.Minute)
 		},
 	}
 
-	_, err := provider.BuildRefs(
+	_, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},
@@ -278,16 +211,16 @@ func TestCRLProviderBuildRefsRejectsExpiredCRL(t *testing.T) {
 	}
 }
 
-func TestCRLProviderBuildRefsRejectsFutureThisUpdate(t *testing.T) {
+func TestCRLTrustMaterialExtractorFromCertificateRejectsFutureThisUpdate(t *testing.T) {
 	fixture := crlfixture.New(t)
-	provider := CRLProvider{
+	extractor := CRLTrustMaterialExtractor{
 		CRLs: []*x509.RevocationList{fixture.LeafCRL},
 		Now: func() time.Time {
 			return fixture.LeafCRL.ThisUpdate.Add(-time.Minute)
 		},
 	}
 
-	_, err := provider.BuildRefs(
+	_, err := extractor.FromCertificate(
 		context.Background(),
 		fixture.Leaf,
 		[]*x509.Certificate{fixture.Intermediate},

@@ -12,17 +12,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"signer-engine/internal/cryptoutil"
 	"signer-engine/internal/signature/cms"
 )
 
-type CRLProvider struct {
+type CRLTrustMaterialExtractor struct {
 	CRLs       []*x509.RevocationList
 	Issuers    []*x509.Certificate
 	HTTPClient *http.Client
@@ -32,106 +30,54 @@ type CRLProvider struct {
 
 const defaultCRLCacheDir = "internal/validation/crl-cache"
 
-func (p CRLProvider) BuildRefs(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) (*Refs, error) {
+func (p CRLTrustMaterialExtractor) FromCertificate(
+	ctx context.Context,
+	leaf *x509.Certificate,
+	chain []*x509.Certificate,
+) (*TrustMaterial, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if cert == nil {
+	if leaf == nil {
 		return nil, errors.New("signing certificate is required")
 	}
 
-	slog.Info("validation: building refs",
-		"subject", cert.Subject.String(),
+	slog.Info("validation: extracting trust material",
+		"subject", leaf.Subject.String(),
 		"provided_chain_certs", len(chain),
 		"provided_issuers", len(p.Issuers),
 		"provided_crls", len(p.CRLs),
 	)
-	chain = p.completeChain(ctx, cert, chain)
+
+	chain = p.completeChain(ctx, leaf, chain)
 	slog.Info("validation: certificate chain ready", "chain_certs", len(chain))
 
-	certificateRefsDER, err := BuildCertificateRefs(chain)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build certificate refs: %w", err)
-	}
-
-	certificateValuesDER, err := BuildCertificateValues(chain)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build certificate values: %w", err)
-	}
-
-	crls, err := p.resolveRevocationLists(ctx, cert, chain)
+	crls, err := p.resolveRevocationLists(ctx, leaf, chain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve revocation data: %w", err)
 	}
 
-	revocationRefsDER, err := buildRevocationRefs(crls)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build revocation refs: %w", err)
-	}
-
-	revocationValuesDER, err := buildRevocationValues(crls)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build revocation values: %w", err)
-	}
-
-	return &Refs{
-		CertificateRefs:   certificateRefsDER,
-		RevocationRefs:    revocationRefsDER,
-		CertificateValues: certificateValuesDER,
-		RevocationValues:  revocationValuesDER,
+	return &TrustMaterial{
+		Leaf:  leaf,
+		Chain: chain,
+		CRLs:  crls,
 	}, nil
 }
 
-func BuildCertificateRefs(certs []*x509.Certificate) ([]byte, error) {
-	refs := make([]otherCertID, 0, len(certs))
-	for _, cert := range certs {
-		if cert == nil {
-			return nil, errors.New("certificate refs contains nil certificate")
-		}
-
-		ref, err := newOtherCertID(cert)
-		if err != nil {
-			return nil, err
-		}
-		refs = append(refs, ref)
-	}
-
-	der, err := asn1.Marshal(refs)
+func (p CRLTrustMaterialExtractor) FromTimestampToken(ctx context.Context, tokenDER []byte) (*TrustMaterial, error) {
+	leaf, chain, err := timestampTokenSignerChain(tokenDER)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal complete certificate refs: %w", err)
+		return nil, fmt.Errorf("failed to extract timestamp certificates: %w", err)
+	}
+	if leaf == nil {
+		slog.Info("validation: timestamp token has no signer certificate info")
+		return nil, nil
 	}
 
-	return der, nil
+	return p.FromCertificate(ctx, leaf, chain)
 }
 
-func BuildCertificateValues(certs []*x509.Certificate) ([]byte, error) {
-	values := make([]asn1.RawValue, 0, len(certs))
-	for _, cert := range certs {
-		if cert == nil {
-			return nil, errors.New("certificate values contains nil certificate")
-		}
-
-		values = append(values, asn1.RawValue{FullBytes: cert.Raw})
-	}
-
-	der, err := asn1.Marshal(values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal certificate values: %w", err)
-	}
-
-	return der, nil
-}
-
-func (p CRLProvider) BuildRevocationRefs(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) ([]byte, error) {
-	crls, err := p.resolveRevocationLists(ctx, cert, chain)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildRevocationRefs(crls)
-}
-
-func (p CRLProvider) resolveRevocationLists(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) ([]*x509.RevocationList, error) {
+func (p CRLTrustMaterialExtractor) resolveRevocationLists(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) ([]*x509.RevocationList, error) {
 	issuerCerts := append([]*x509.Certificate(nil), chain...)
 	issuerCerts = append(issuerCerts, p.Issuers...)
 
@@ -176,50 +122,7 @@ func (p CRLProvider) resolveRevocationLists(ctx context.Context, cert *x509.Cert
 	return resolvedCRLs, nil
 }
 
-func buildRevocationRefs(crls []*x509.RevocationList) ([]byte, error) {
-	refs := make([]crlOcspRef, 0, len(crls))
-	for _, crl := range crls {
-		if crl == nil {
-			return nil, errors.New("revocation refs contains nil CRL")
-		}
-
-		crlID, err := newCRLValidatedID(crl)
-		if err != nil {
-			return nil, err
-		}
-		refs = append(refs, crlOcspRef{
-			CRLIDs: crlListID{CRLs: []crlValidatedID{crlID}},
-		})
-	}
-
-	der, err := asn1.Marshal(refs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal complete revocation refs: %w", err)
-	}
-
-	return der, nil
-}
-
-func buildRevocationValues(crls []*x509.RevocationList) ([]byte, error) {
-	values := revocationValues{
-		CRLVals: make([]asn1.RawValue, 0, len(crls)),
-	}
-	for _, crl := range crls {
-		if crl == nil {
-			return nil, errors.New("revocation values contains nil CRL")
-		}
-		values.CRLVals = append(values.CRLVals, asn1.RawValue{FullBytes: crl.Raw})
-	}
-
-	der, err := asn1.Marshal(values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal revocation values: %w", err)
-	}
-
-	return der, nil
-}
-
-func (p CRLProvider) crlForCertificate(ctx context.Context, target *x509.Certificate, issuers []*x509.Certificate) (*x509.RevocationList, *x509.Certificate, bool, error) {
+func (p CRLTrustMaterialExtractor) crlForCertificate(ctx context.Context, target *x509.Certificate, issuers []*x509.Certificate) (*x509.RevocationList, *x509.Certificate, bool, error) {
 	crl, issuer, ok := findProvidedCRLForCertificate(target, p.CRLs, issuers)
 	if ok {
 		slog.Info("validation: using provided CRL",
@@ -271,7 +174,7 @@ func findIssuerForCertificate(target *x509.Certificate, issuers []*x509.Certific
 	return nil, false
 }
 
-func (p CRLProvider) completeChain(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) []*x509.Certificate {
+func (p CRLTrustMaterialExtractor) completeChain(ctx context.Context, cert *x509.Certificate, chain []*x509.Certificate) []*x509.Certificate {
 	completed := appendCertificateSet(nil, chain...)
 	issuers := appendCertificateSet(completed, p.Issuers...)
 	current := cert
@@ -331,7 +234,7 @@ func (p CRLProvider) completeChain(ctx context.Context, cert *x509.Certificate, 
 	return completed
 }
 
-func (p CRLProvider) fetchIssuerCertificates(ctx context.Context, cert *x509.Certificate) ([]*x509.Certificate, error) {
+func (p CRLTrustMaterialExtractor) fetchIssuerCertificates(ctx context.Context, cert *x509.Certificate) ([]*x509.Certificate, error) {
 	if len(cert.IssuingCertificateURL) == 0 {
 		slog.Info("validation: certificate has no AIA issuer URL", "subject", cert.Subject.String())
 		return nil, nil
@@ -353,7 +256,7 @@ func (p CRLProvider) fetchIssuerCertificates(ctx context.Context, cert *x509.Cer
 	return nil, lastErr
 }
 
-func (p CRLProvider) fetchCertificatesFromURI(ctx context.Context, uri string) ([]*x509.Certificate, error) {
+func (p CRLTrustMaterialExtractor) fetchCertificatesFromURI(ctx context.Context, uri string) ([]*x509.Certificate, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build issuer certificate request for %q: %w", uri, err)
@@ -388,7 +291,7 @@ func (p CRLProvider) fetchCertificatesFromURI(ctx context.Context, uri string) (
 	return certs, nil
 }
 
-func (p CRLProvider) fetchCRL(ctx context.Context, cert *x509.Certificate, issuer *x509.Certificate) (*x509.RevocationList, error) {
+func (p CRLTrustMaterialExtractor) fetchCRL(ctx context.Context, cert *x509.Certificate, issuer *x509.Certificate) (*x509.RevocationList, error) {
 	var lastErr error
 	for _, uri := range cert.CRLDistributionPoints {
 		if crl, ok := p.cachedCRL(uri, issuer); ok {
@@ -412,7 +315,7 @@ func (p CRLProvider) fetchCRL(ctx context.Context, cert *x509.Certificate, issue
 	return nil, lastErr
 }
 
-func (p CRLProvider) cachedCRL(uri string, issuer *x509.Certificate) (*x509.RevocationList, bool) {
+func (p CRLTrustMaterialExtractor) cachedCRL(uri string, issuer *x509.Certificate) (*x509.RevocationList, bool) {
 	path := p.cachePath(uri)
 
 	data, err := os.ReadFile(path)
@@ -439,7 +342,7 @@ func (p CRLProvider) cachedCRL(uri string, issuer *x509.Certificate) (*x509.Revo
 	return crl, true
 }
 
-func (p CRLProvider) cacheCRL(uri string, der []byte) {
+func (p CRLTrustMaterialExtractor) cacheCRL(uri string, der []byte) {
 	if len(der) == 0 {
 		return
 	}
@@ -456,19 +359,19 @@ func (p CRLProvider) cacheCRL(uri string, der []byte) {
 	slog.Info("validation: added CRL to cache", "uri", uri, "path", path, "bytes", len(der))
 }
 
-func (p CRLProvider) cachePath(uri string) string {
+func (p CRLTrustMaterialExtractor) cachePath(uri string) string {
 	sum := sha256.Sum256([]byte(uri))
 	return filepath.Join(p.cacheDir(), hex.EncodeToString(sum[:])+".crl")
 }
 
-func (p CRLProvider) cacheDir() string {
+func (p CRLTrustMaterialExtractor) cacheDir() string {
 	if p.CacheDir != "" {
 		return p.CacheDir
 	}
 	return defaultCRLCacheDir
 }
 
-func (p CRLProvider) validateCRL(crl *x509.RevocationList, issuer *x509.Certificate) error {
+func (p CRLTrustMaterialExtractor) validateCRL(crl *x509.RevocationList, issuer *x509.Certificate) error {
 	if crl == nil {
 		return errors.New("CRL is required")
 	}
@@ -493,14 +396,14 @@ func (p CRLProvider) validateCRL(crl *x509.RevocationList, issuer *x509.Certific
 	return nil
 }
 
-func (p CRLProvider) now() time.Time {
+func (p CRLTrustMaterialExtractor) now() time.Time {
 	if p.Now != nil {
 		return p.Now().UTC()
 	}
 	return time.Now().UTC()
 }
 
-func (p CRLProvider) fetchCRLFromURI(ctx context.Context, uri string) (*x509.RevocationList, error) {
+func (p CRLTrustMaterialExtractor) fetchCRLFromURI(ctx context.Context, uri string) (*x509.RevocationList, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build CRL request for %q: %w", uri, err)
@@ -607,95 +510,4 @@ func appendCertificateSet(base []*x509.Certificate, extra ...*x509.Certificate) 
 		}
 	}
 	return out
-}
-
-func newOtherCertID(cert *x509.Certificate) (otherCertID, error) {
-	if cert.SerialNumber == nil {
-		return otherCertID{}, errors.New("certificate serial number is required")
-	}
-
-	hash := sha256.Sum256(cert.Raw)
-	return otherCertID{
-		OtherCertHash: newSHA256OtherHash(hash[:]),
-		IssuerSerial: issuerSerial{
-			Issuer:       directoryNameGeneralNames(cert.RawIssuer),
-			SerialNumber: cert.SerialNumber,
-		},
-	}, nil
-}
-
-func newCRLValidatedID(crl *x509.RevocationList) (crlValidatedID, error) {
-	if len(crl.Raw) == 0 {
-		return crlValidatedID{}, errors.New("CRL raw DER is required")
-	}
-
-	hash := sha256.Sum256(crl.Raw)
-	id := crlIdentifier{
-		CRLIssuer:     asn1.RawValue{FullBytes: crl.RawIssuer},
-		CRLIssuedTime: crl.ThisUpdate,
-		CRLNumber:     crl.Number,
-	}
-
-	return crlValidatedID{
-		CRLHash:       newSHA256OtherHash(hash[:]),
-		CRLIdentifier: id,
-	}, nil
-}
-
-func newSHA256OtherHash(hash []byte) otherHashAlgAndValue {
-	return otherHashAlgAndValue{
-		HashAlgorithm: cms.AlgorithmIdentifier{
-			Algorithm: cryptoutil.OIDSHA256,
-		},
-		HashValue: append([]byte(nil), hash...),
-	}
-}
-
-func directoryNameGeneralNames(rawName []byte) []asn1.RawValue {
-	return []asn1.RawValue{
-		{
-			Class:      asn1.ClassContextSpecific,
-			Tag:        4,
-			IsCompound: true,
-			Bytes:      rawName,
-		},
-	}
-}
-
-type otherCertID struct {
-	OtherCertHash otherHashAlgAndValue
-	IssuerSerial  issuerSerial `asn1:"optional"`
-}
-
-type issuerSerial struct {
-	Issuer       []asn1.RawValue
-	SerialNumber *big.Int
-}
-
-type otherHashAlgAndValue struct {
-	HashAlgorithm cms.AlgorithmIdentifier
-	HashValue     []byte
-}
-
-type crlOcspRef struct {
-	CRLIDs crlListID `asn1:"explicit,tag:0,optional"`
-}
-
-type crlListID struct {
-	CRLs []crlValidatedID
-}
-
-type crlValidatedID struct {
-	CRLHash       otherHashAlgAndValue
-	CRLIdentifier crlIdentifier `asn1:"optional"`
-}
-
-type crlIdentifier struct {
-	CRLIssuer     asn1.RawValue
-	CRLIssuedTime time.Time
-	CRLNumber     *big.Int `asn1:"optional"`
-}
-
-type revocationValues struct {
-	CRLVals []asn1.RawValue `asn1:"explicit,tag:0,optional"`
 }

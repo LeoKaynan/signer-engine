@@ -5,17 +5,17 @@ import (
 	"crypto/x509"
 )
 
-type Provider interface {
-	BuildRefs(
+type TrustMaterialExtractor interface {
+	FromCertificate(
 		ctx context.Context,
-		cert *x509.Certificate,
+		leaf *x509.Certificate,
 		chain []*x509.Certificate,
-	) (*Refs, error)
+	) (*TrustMaterial, error)
+	FromTimestampToken(ctx context.Context, tokenDER []byte) (*TrustMaterial, error)
 }
 
-type Refs struct {
-	CertificateRefs   []byte
-	RevocationRefs    []byte
-	CertificateValues []byte
-	RevocationValues  []byte
+type TrustMaterial struct {
+	Leaf  *x509.Certificate
+	Chain []*x509.Certificate
+	CRLs  []*x509.RevocationList
 }
