@@ -45,7 +45,7 @@ func requiresValidationRefs(names []AttributeName) bool {
 	// inside the relevant timestamp token as unsignedAttrs.
 	// https://www.rfc-editor.org/rfc/rfc5126#section-6.2.1
 	for _, name := range names {
-		if name == CertificateRefsAttr || name == RevocationRefsAttr || name == EscTimeStampAttr {
+		if name == CertificateRefsAttr || name == RevocationRefsAttr || name == EscTimeStampAttr || name == ArchiveTimeStampV2Attr {
 			return true
 		}
 	}
@@ -99,6 +99,8 @@ func (b *unsignedAttributeBuild) buildOne(name AttributeName, previousAttrs []cm
 		return b.certValues()
 	case RevocationValuesAttr:
 		return b.revocationValues()
+	case ArchiveTimeStampV2Attr:
+		return b.archiveTimeStampV2(previousAttrs)
 	default:
 		return cms.Attribute{}, fmt.Errorf("unsupported unsigned attribute: %s", name)
 	}
@@ -220,6 +222,25 @@ func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cm
 		input,
 		"esc timestamp",
 		EscTimeStampAttribute,
+	)
+}
+
+func (b *unsignedAttributeBuild) archiveTimeStampV2(previousAttrs []cms.Attribute) (cms.Attribute, error) {
+	if b.signer.TimeStampProvider == nil {
+		return cms.Attribute{}, fmt.Errorf("time stamp provider is required")
+	}
+
+	slog.Info("cades: building archive timestamp input", "previous_unsigned_attrs", len(previousAttrs))
+	input, err := ArchiveTimeStampV2Input(b.ctx, previousAttrs)
+	if err != nil {
+		return cms.Attribute{}, fmt.Errorf("failed to build archive timestamp input: %w", err)
+	}
+
+	return b.stampAndWrap(
+		context.Background(),
+		input,
+		"archive timestamp v2",
+		ArchiveTimeStampV2Attribute,
 	)
 }
 

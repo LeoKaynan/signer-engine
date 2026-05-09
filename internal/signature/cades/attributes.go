@@ -176,3 +176,18 @@ func RevocationValuesAttribute(valuesDER []byte) (cms.Attribute, error) {
 		},
 	}, nil
 }
+
+const ArchiveTimeStampV2Attr AttributeName = "archiveTimeStampV2"
+
+func ArchiveTimeStampV2Attribute(tokenDER []byte) (cms.Attribute, error) {
+	if len(tokenDER) == 0 {
+		return cms.Attribute{}, errors.New("archive timestamp token is empty")
+	}
+
+	return cms.Attribute{
+		AttrType: OIDArchiveTimeStampV2,
+		AttrValues: []asn1.RawValue{
+			{FullBytes: tokenDER},
+		},
+	}, nil
+}

@@ -70,6 +70,32 @@ func TestPolicyADRC_UnsignedAttributeNames(t *testing.T) {
 	}
 }
 
+func TestPolicyADRA_UnsignedAttributeNames(t *testing.T) {
+	policy, err := NewPolicy(PolicyNamePAADRAv25)
+	if err != nil {
+		t.Fatalf("NewPolicy failed: %v", err)
+	}
+
+	attrs := policy.UnsignedAttributeNames()
+	want := []cades.AttributeName{
+		cades.SignatureTimeStampTokenAttr,
+		cades.CertificateRefsAttr,
+		cades.RevocationRefsAttr,
+		cades.EscTimeStampAttr,
+		cades.CertValuesAttr,
+		cades.RevocationValuesAttr,
+		cades.ArchiveTimeStampV2Attr,
+	}
+	if len(attrs) != len(want) {
+		t.Fatalf("unexpected unsigned attrs len: got=%d want=%d attrs=%v", len(attrs), len(want), attrs)
+	}
+	for i := range want {
+		if attrs[i] != want[i] {
+			t.Fatalf("unexpected unsigned attr at %d: got=%v want=%v", i, attrs[i], want[i])
+		}
+	}
+}
+
 func hasAttribute(attrs []cms.Attribute, oid asn1.ObjectIdentifier) bool {
 	for _, attr := range attrs {
 		if attr.AttrType.Equal(oid) {

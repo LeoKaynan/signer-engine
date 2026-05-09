@@ -549,3 +549,70 @@ func TestSigner_SignWithArchivalValues(t *testing.T) {
 		t.Fatalf("expected revocation values on outer signer and both timestamp tokens, got %d", count)
 	}
 }
+
+func TestSigner_SignWithArchiveTimeStampV2(t *testing.T) {
+	credential := certfixture.NewCredential(t)
+	timestampCredential := certfixture.NewCredential(t)
+	revocationFixture := crlfixture.New(t)
+	policy := policyfixture.Policy{
+		UnsignedAttrs: []cades.AttributeName{
+			cades.SignatureTimeStampTokenAttr,
+			cades.CertificateRefsAttr,
+			cades.RevocationRefsAttr,
+			cades.EscTimeStampAttr,
+			cades.CertValuesAttr,
+			cades.RevocationValuesAttr,
+			cades.ArchiveTimeStampV2Attr,
+		},
+	}
+	timeStampProvider := &fakeTimeStampProvider{
+		certs: []*x509.Certificate{timestampCredential.Certificate()},
+	}
+	extractor := &fakeTrustMaterialExtractor{
+		crls: []*x509.RevocationList{revocationFixture.LeafCRL},
+		tsa: &validation.TrustMaterial{
+			Leaf: timestampCredential.Certificate(),
+			CRLs: []*x509.RevocationList{revocationFixture.LeafCRL},
+		},
+	}
+
+	cadesSigner := cades.Signer{
+		Credential:             credential,
+		HashAlg:                crypto.SHA256,
+		Detached:               false,
+		Policy:                 policy,
+		TimeStampProvider:      timeStampProvider,
+		TrustMaterialExtractor: extractor,
+	}
+
+	sigDER, err := cadesSigner.Sign([]byte("Hello, CAdES AD-RA!"))
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+
+	if len(timeStampProvider.inputs) != 3 {
+		t.Fatalf("expected timestamp provider to be called three times, got %d", len(timeStampProvider.inputs))
+	}
+	if len(timeStampProvider.inputs[2]) <= len(timeStampProvider.inputs[1]) {
+		t.Fatal("expected archive timestamp input to cover validation values and previous timestamps")
+	}
+	if extractor.calls != 4 {
+		t.Fatalf("expected extractor to be called four times, got %d", extractor.calls)
+	}
+
+	archiveTimeStampOIDDER, err := asn1.Marshal(cades.OIDArchiveTimeStampV2)
+	if err != nil {
+		t.Fatalf("marshal archive timestamp OID: %v", err)
+	}
+	if !bytes.Contains(sigDER, archiveTimeStampOIDDER) {
+		t.Fatal("archive timestamp v2 OID not present in signature")
+	}
+
+	certValuesOIDDER, err := asn1.Marshal(cades.OIDCertValues)
+	if err != nil {
+		t.Fatalf("marshal cert values OID: %v", err)
+	}
+	if count := bytes.Count(sigDER, certValuesOIDDER); count != 4 {
+		t.Fatalf("expected cert values on outer signer and all timestamp tokens, got %d", count)
+	}
+}

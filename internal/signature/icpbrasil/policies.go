@@ -12,6 +12,7 @@ const (
 	PolicyNamePAADRTv24 cades.PolicyName = "PA_AD_RT_v2_4"
 	PolicyNamePAADRVv24 cades.PolicyName = "PA_AD_RV_v2_4"
 	PolicyNamePAADRCv24 cades.PolicyName = "PA_AD_RC_v2_4"
+	PolicyNamePAADRAv25 cades.PolicyName = "PA_AD_RA_v2_5"
 )
 
 type PolicyInfo struct {
@@ -95,6 +96,29 @@ var policies = map[cades.PolicyName]PolicyInfo{
 			cades.EscTimeStampAttr,
 			cades.CertValuesAttr,
 			cades.RevocationValuesAttr,
+		},
+	},
+	PolicyNamePAADRAv25: {
+		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 5, 2, 5},
+		Hash: []byte{
+			0x05, 0x31, 0xee, 0x33, 0x8a, 0xcb, 0x53, 0x36,
+			0x4c, 0x8b, 0x31, 0x6a, 0x11, 0xd9, 0x04, 0x23,
+			0xee, 0x33, 0xe7, 0x14, 0xcb, 0x36, 0x5d, 0x9c,
+			0x45, 0x62, 0xb9, 0x0f, 0xa4, 0x7d, 0x90, 0x99,
+		},
+		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RA_v2_5.der",
+		RequiredAttributes: []cades.AttributeName{
+			cades.SigningCertificateV2Attr,
+			cades.PolicyIdentifierAttr,
+		},
+		RequiredUnsignedAttributes: []cades.AttributeName{
+			cades.SignatureTimeStampTokenAttr,
+			cades.CertificateRefsAttr,
+			cades.RevocationRefsAttr,
+			cades.EscTimeStampAttr,
+			cades.CertValuesAttr,
+			cades.RevocationValuesAttr,
+			cades.ArchiveTimeStampV2Attr,
 		},
 	},
 }

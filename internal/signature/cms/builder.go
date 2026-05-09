@@ -10,8 +10,14 @@ import (
 )
 
 type UnsignedAttributeContext struct {
-	Signature []byte
-	HashAlg   crypto.Hash
+	Signature        []byte
+	HashAlg          crypto.Hash
+	Data             []byte
+	Detached         bool
+	EncapContentInfo EncapsulatedContentInfo
+	Certificates     []asn1.RawValue
+	CRLs             []asn1.RawValue
+	SignerInfo       SignerInfo
 }
 
 type UnsignedAttributeBuilder func(ctx UnsignedAttributeContext) ([]Attribute, error)
@@ -86,19 +92,17 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	}
 	slog.Info("cms: authenticated attributes signed", "signature_bytes", len(signature))
 
-	var unsignedAttrs []Attribute
-	if b.UnsignedAttributeBuilder != nil {
-		slog.Info("cms: building unsigned attributes")
-		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
-			Signature: signature,
-			HashAlg:   b.HashAlg,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to build unsigned attributes: %w", err)
-		}
-		slog.Info("cms: unsigned attributes built", "count", len(unsignedAttrs))
-	} else {
-		slog.Info("cms: no unsigned attributes configured")
+	certificates := []asn1.RawValue{
+		{FullBytes: b.Credential.Certificate().Raw},
+	}
+
+	for _, c := range b.Credential.Chain() {
+		certificates = append(certificates, asn1.RawValue{FullBytes: c.Raw})
+	}
+
+	encapsulatedContentInfo := EncapsulatedContentInfo{EContentType: OIDData}
+	if !b.Detached {
+		encapsulatedContentInfo.EContent = data
 	}
 
 	signerInfo := SignerInfo{
@@ -123,22 +127,29 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 			Algorithm:  cryptoutil.OIDRSAEncryption,
 			Parameters: asn1.NullRawValue,
 		},
-		Signature:     signature,
-		UnsignedAttrs: unsignedAttrs,
+		Signature: signature,
 	}
 
-	certificates := []asn1.RawValue{
-		{FullBytes: b.Credential.Certificate().Raw},
+	var unsignedAttrs []Attribute
+	if b.UnsignedAttributeBuilder != nil {
+		slog.Info("cms: building unsigned attributes")
+		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
+			Signature:        signature,
+			HashAlg:          b.HashAlg,
+			Data:             data,
+			Detached:         b.Detached,
+			EncapContentInfo: encapsulatedContentInfo,
+			Certificates:     certificates,
+			SignerInfo:       signerInfo,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build unsigned attributes: %w", err)
+		}
+		slog.Info("cms: unsigned attributes built", "count", len(unsignedAttrs))
+	} else {
+		slog.Info("cms: no unsigned attributes configured")
 	}
-
-	for _, c := range b.Credential.Chain() {
-		certificates = append(certificates, asn1.RawValue{FullBytes: c.Raw})
-	}
-
-	encapsulatedContentInfo := EncapsulatedContentInfo{EContentType: OIDData}
-	if !b.Detached {
-		encapsulatedContentInfo.EContent = data
-	}
+	signerInfo.UnsignedAttrs = unsignedAttrs
 
 	signedData := SignedData{
 		// RFC5652 5.1 SignedData Type

@@ -77,6 +77,21 @@ func TestBuilder_BuildWithUnsignedAttributes(t *testing.T) {
 			if ctx.HashAlg != crypto.SHA256 {
 				return nil, fmt.Errorf("hash algorithm is not SHA256")
 			}
+			if len(ctx.Data) == 0 {
+				return nil, errors.New("data is empty")
+			}
+			if ctx.Detached {
+				return nil, errors.New("signature should not be detached")
+			}
+			if !ctx.EncapContentInfo.EContentType.Equal(OIDData) || len(ctx.EncapContentInfo.EContent) == 0 {
+				return nil, errors.New("encapsulated content info is incomplete")
+			}
+			if len(ctx.Certificates) == 0 {
+				return nil, errors.New("certificates are empty")
+			}
+			if len(ctx.SignerInfo.SignedAttrs) == 0 || len(ctx.SignerInfo.Signature) == 0 {
+				return nil, errors.New("signer info is incomplete")
+			}
 
 			return []Attribute{
 				{
