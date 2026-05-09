@@ -55,9 +55,22 @@ func (p cadesPolicy) UnsignedAttributeNames() []cades.AttributeName {
 }
 
 func NewPolicy(name cades.PolicyName) (cades.Policy, error) {
+	return newPolicy(name, icpBrasilBase{})
+}
+
+func NewPolicyWithRootsPEM(name cades.PolicyName, rootsPEM []byte) (cades.Policy, error) {
+	roots := append([]byte(nil), rootsPEM...)
+	return newPolicy(name, icpBrasilBase{
+		rootPEM: func() ([]byte, error) {
+			return append([]byte(nil), roots...), nil
+		},
+	})
+}
+
+func newPolicy(name cades.PolicyName, base icpBrasilBase) (cades.Policy, error) {
 	info, ok := policies[name]
 	if !ok {
 		return nil, fmt.Errorf("policy not found: %s", name)
 	}
-	return &cadesPolicy{info: info}, nil
+	return &cadesPolicy{icpBrasilBase: base, info: info}, nil
 }

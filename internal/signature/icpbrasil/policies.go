@@ -23,6 +23,21 @@ type PolicyInfo struct {
 	RequiredUnsignedAttributes []cades.AttributeName
 }
 
+func PolicyInfoByName(name cades.PolicyName) (PolicyInfo, bool) {
+	info, ok := policies[name]
+	if !ok {
+		return PolicyInfo{}, false
+	}
+
+	return PolicyInfo{
+		OID:                        append(asn1.ObjectIdentifier(nil), info.OID...),
+		Hash:                       append([]byte(nil), info.Hash...),
+		URI:                        info.URI,
+		RequiredAttributes:         append([]cades.AttributeName(nil), info.RequiredAttributes...),
+		RequiredUnsignedAttributes: append([]cades.AttributeName(nil), info.RequiredUnsignedAttributes...),
+	}, true
+}
+
 var policies = map[cades.PolicyName]PolicyInfo{
 	PolicyNamePAADRBv24: {
 		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 1, 2, 4},

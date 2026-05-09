@@ -10,11 +10,14 @@ import (
 	"signer-engine/internal/signer"
 	"signer-engine/internal/tsa"
 	"signer-engine/internal/validation"
+	"time"
 )
 
 type Service struct {
 	TimeStampProvider      tsa.Provider
 	TrustMaterialExtractor validation.TrustMaterialExtractor
+	PolicyResolver         func(cades.PolicyName) (cades.Policy, error)
+	Now                    func() time.Time
 }
 
 func NewFromEnv() Service {
@@ -58,7 +61,12 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 	}
 	slog.Info("signing: CAdES mode resolved", "detached", detached)
 
-	policy, err := icpbrasil.NewPolicy(request.Policy)
+	policyResolver := s.PolicyResolver
+	if policyResolver == nil {
+		policyResolver = icpbrasil.NewPolicy
+	}
+
+	policy, err := policyResolver(request.Policy)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to resolve policy: %w", err)
 	}
@@ -71,6 +79,7 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 		HashAlg:                crypto.SHA256,
 		TimeStampProvider:      s.TimeStampProvider,
 		TrustMaterialExtractor: s.TrustMaterialExtractor,
+		Now:                    s.Now,
 	}
 
 	signature, err := signer.Sign(request.Data)
