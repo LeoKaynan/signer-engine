@@ -31,67 +31,6 @@ type Builder struct {
 }
 
 func (b *Builder) Build(data []byte) ([]byte, error) {
-	slog.Info("cms: building signed data",
-		"hash", b.HashAlg.String(),
-		"detached", b.Detached,
-		"data_bytes", len(data),
-	)
-
-	dataHash := b.HashAlg.New()
-	dataHash.Write(data)
-	messageDigest := dataHash.Sum(nil)
-	slog.Info("cms: message digest calculated", "bytes", len(messageDigest))
-
-	messageDigestValueDER, err := asn1.Marshal(messageDigest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal message digest value: %w", err)
-	}
-
-	contentTypeValueDER, err := asn1.Marshal(OIDData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal content type value: %w", err)
-	}
-
-	signedAttrs := []Attribute{
-		{
-			AttrType: OIDContentType,
-			AttrValues: []asn1.RawValue{
-				{FullBytes: contentTypeValueDER},
-			},
-		},
-		{
-			AttrType: OIDMessageDigest,
-			AttrValues: []asn1.RawValue{
-				{FullBytes: messageDigestValueDER},
-			},
-		},
-	}
-
-	signedAttrs = append(signedAttrs, b.ExtraSignedAttributes...)
-	slog.Info("cms: signed attributes prepared",
-		"count", len(signedAttrs),
-		"extra", len(b.ExtraSignedAttributes),
-	)
-
-	// RFC5652 5.4 Message Digest Calculation Process
-	// The IMPLICIT [0] tag in the signedAttrs is not used for the DER encoding, rather an EXPLICIT SET OF tag is used.
-	signedAttrsDER, err := asn1.MarshalWithParams(signedAttrs, "set")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal message digest attribute: %w", err)
-	}
-	slog.Info("cms: signed attributes marshaled", "bytes", len(signedAttrsDER))
-
-	toBeSignedHash := b.HashAlg.New()
-	toBeSignedHash.Write(signedAttrsDER)
-	toBeSignedBytes := toBeSignedHash.Sum(nil)
-
-	slog.Info("cms: signing authenticated attributes")
-	signature, err := b.Credential.Sign(toBeSignedBytes, b.HashAlg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
-	}
-	slog.Info("cms: authenticated attributes signed", "signature_bytes", len(signature))
-
 	certificates := []asn1.RawValue{
 		{FullBytes: b.Credential.Certificate().Raw},
 	}
@@ -105,51 +44,10 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 		encapsulatedContentInfo.EContent = data
 	}
 
-	signerInfo := SignerInfo{
-		// RFC5652 5.3 SignerInfo Type
-		// version is the syntax version number. If the SignerIdentifier is
-		// the CHOICE issuerAndSerialNumber, then the version MUST be 1. If
-		// the SignerIdentifier is subjectKeyIdentifier, then the version
-		// MUST be 3
-		Version: 1,
-		SID: IssuerAndSerialNumber{
-			Issuer: asn1.RawValue{
-				FullBytes: b.Credential.Certificate().RawIssuer,
-			},
-			SerialNumber: b.Credential.Certificate().SerialNumber,
-		},
-		DigestAlgorithm: AlgorithmIdentifier{
-			Algorithm:  cryptoutil.OIDSHA256,
-			Parameters: asn1.NullRawValue,
-		},
-		SignedAttrs: signedAttrs,
-		SignatureAlgorithm: AlgorithmIdentifier{
-			Algorithm:  cryptoutil.OIDRSAEncryption,
-			Parameters: asn1.NullRawValue,
-		},
-		Signature: signature,
+	signerInfo, err := b.buildSignerInfo(data, encapsulatedContentInfo, certificates)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build signer info: %w", err)
 	}
-
-	var unsignedAttrs []Attribute
-	if b.UnsignedAttributeBuilder != nil {
-		slog.Info("cms: building unsigned attributes")
-		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
-			Signature:        signature,
-			HashAlg:          b.HashAlg,
-			Data:             data,
-			Detached:         b.Detached,
-			EncapContentInfo: encapsulatedContentInfo,
-			Certificates:     certificates,
-			SignerInfo:       signerInfo,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to build unsigned attributes: %w", err)
-		}
-		slog.Info("cms: unsigned attributes built", "count", len(unsignedAttrs))
-	} else {
-		slog.Info("cms: no unsigned attributes configured")
-	}
-	signerInfo.UnsignedAttrs = unsignedAttrs
 
 	signedData := SignedData{
 		// RFC5652 5.1 SignedData Type
@@ -192,4 +90,115 @@ func (b *Builder) Build(data []byte) ([]byte, error) {
 	slog.Info("cms: content info marshaled", "bytes", len(contentInfoBytes))
 
 	return contentInfoBytes, nil
+}
+
+func (b *Builder) buildSignerInfo(data []byte, encapsulatedContentInfo EncapsulatedContentInfo, certificates []asn1.RawValue) (SignerInfo, error) {
+	slog.Info("cms: building signed data",
+		"hash", b.HashAlg.String(),
+		"detached", b.Detached,
+		"data_bytes", len(data),
+	)
+
+	dataHash := b.HashAlg.New()
+	dataHash.Write(data)
+	messageDigest := dataHash.Sum(nil)
+	slog.Info("cms: message digest calculated", "bytes", len(messageDigest))
+
+	messageDigestValueDER, err := asn1.Marshal(messageDigest)
+	if err != nil {
+		return SignerInfo{}, fmt.Errorf("failed to marshal message digest value: %w", err)
+	}
+
+	contentTypeValueDER, err := asn1.Marshal(OIDData)
+	if err != nil {
+		return SignerInfo{}, fmt.Errorf("failed to marshal content type value: %w", err)
+	}
+
+	signedAttrs := []Attribute{
+		{
+			AttrType: OIDContentType,
+			AttrValues: []asn1.RawValue{
+				{FullBytes: contentTypeValueDER},
+			},
+		},
+		{
+			AttrType: OIDMessageDigest,
+			AttrValues: []asn1.RawValue{
+				{FullBytes: messageDigestValueDER},
+			},
+		},
+	}
+
+	signedAttrs = append(signedAttrs, b.ExtraSignedAttributes...)
+	slog.Info("cms: signed attributes prepared",
+		"count", len(signedAttrs),
+		"extra", len(b.ExtraSignedAttributes),
+	)
+
+	// RFC5652 5.4 Message Digest Calculation Process
+	// The IMPLICIT [0] tag in the signedAttrs is not used for the DER encoding, rather an EXPLICIT SET OF tag is used.
+	signedAttrsDER, err := asn1.MarshalWithParams(signedAttrs, "set")
+	if err != nil {
+		return SignerInfo{}, fmt.Errorf("failed to marshal message digest attribute: %w", err)
+	}
+	slog.Info("cms: signed attributes marshaled", "bytes", len(signedAttrsDER))
+
+	toBeSignedHash := b.HashAlg.New()
+	toBeSignedHash.Write(signedAttrsDER)
+	toBeSignedBytes := toBeSignedHash.Sum(nil)
+
+	slog.Info("cms: signing authenticated attributes")
+	signature, err := b.Credential.Sign(toBeSignedBytes, b.HashAlg)
+	if err != nil {
+		return SignerInfo{}, fmt.Errorf("failed to sign: %w", err)
+	}
+	slog.Info("cms: authenticated attributes signed", "signature_bytes", len(signature))
+
+	signerInfo := SignerInfo{
+		// RFC5652 5.3 SignerInfo Type
+		// version is the syntax version number. If the SignerIdentifier is
+		// the CHOICE issuerAndSerialNumber, then the version MUST be 1. If
+		// the SignerIdentifier is subjectKeyIdentifier, then the version
+		// MUST be 3
+		Version: 1,
+		SID: IssuerAndSerialNumber{
+			Issuer: asn1.RawValue{
+				FullBytes: b.Credential.Certificate().RawIssuer,
+			},
+			SerialNumber: b.Credential.Certificate().SerialNumber,
+		},
+		DigestAlgorithm: AlgorithmIdentifier{
+			Algorithm:  cryptoutil.OIDSHA256,
+			Parameters: asn1.NullRawValue,
+		},
+		SignedAttrs: signedAttrs,
+		SignatureAlgorithm: AlgorithmIdentifier{
+			Algorithm:  cryptoutil.OIDRSAEncryption,
+			Parameters: asn1.NullRawValue,
+		},
+		Signature: signature,
+	}
+
+	var unsignedAttrs []Attribute
+	if b.UnsignedAttributeBuilder != nil {
+		slog.Info("cms: building unsigned attributes")
+		unsignedAttrs, err = b.UnsignedAttributeBuilder(UnsignedAttributeContext{
+			Signature:        signature,
+			HashAlg:          b.HashAlg,
+			Data:             data,
+			Detached:         b.Detached,
+			EncapContentInfo: encapsulatedContentInfo,
+			Certificates:     certificates,
+			SignerInfo:       signerInfo,
+		})
+		if err != nil {
+			return SignerInfo{}, fmt.Errorf("failed to build unsigned attributes: %w", err)
+		}
+		slog.Info("cms: unsigned attributes built", "count", len(unsignedAttrs))
+	} else {
+		slog.Info("cms: no unsigned attributes configured")
+	}
+	signerInfo.UnsignedAttrs = unsignedAttrs
+
+	return signerInfo, nil
 }
