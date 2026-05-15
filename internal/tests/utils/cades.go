@@ -45,6 +45,28 @@ func RequireSingleSignerInfo(t testing.TB, signedData cms.SignedData) cms.Signer
 	return signedData.SignerInfos[0]
 }
 
+func RequireSignerInfoCount(t testing.TB, signedData cms.SignedData, count int) {
+	t.Helper()
+
+	if len(signedData.SignerInfos) != count {
+		t.Fatalf("expected %d signer info entries, got %d", count, len(signedData.SignerInfos))
+	}
+}
+
+func RequireSignerInfoByCert(t testing.TB, signedData cms.SignedData, cert *x509.Certificate) cms.SignerInfo {
+	t.Helper()
+
+	for _, si := range signedData.SignerInfos {
+		if bytes.Equal(si.SID.Issuer.FullBytes, cert.RawIssuer) &&
+			si.SID.SerialNumber != nil &&
+			si.SID.SerialNumber.Cmp(cert.SerialNumber) == 0 {
+			return si
+		}
+	}
+	t.Fatalf("no signer info found for certificate: subject=%s serial=%s", cert.Subject, cert.SerialNumber)
+	panic("unreachable")
+}
+
 func RequireSignedAttr(t testing.TB, signerInfo cms.SignerInfo, oid asn1.ObjectIdentifier) cms.Attribute {
 	t.Helper()
 

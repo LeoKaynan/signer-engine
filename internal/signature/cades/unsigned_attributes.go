@@ -19,7 +19,7 @@ func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
 
 	return func(ctx cms.UnsignedAttributeContext) ([]cms.Attribute, error) {
 		var resolver *validation.SignatureTrustResolver
-		if requiresValidationRefs(names) || requiresValidationValues(names) {
+		if requiresTimestampEnrichment(names) || requiresValidationValues(names) {
 			if s.TrustMaterialExtractor == nil {
 				return nil, fmt.Errorf("trust material extractor is required")
 			}
@@ -33,17 +33,18 @@ func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
 			signer:                s,
 			resolver:              resolver,
 			ctx:                   ctx,
-			enrichTimestampTokens: requiresValidationRefs(names),
+			enrichTimestampTokens: requiresTimestampEnrichment(names),
 			enrichTimestampValues: requiresValidationValues(names),
 		}
 		return builder.build(names)
 	}
 }
 
-func requiresValidationRefs(names []AttributeName) bool {
-	// RFC 5126 6.2.1/6.2.2 allows TSU validation refs to be carried
-	// inside the relevant timestamp token as unsignedAttrs.
-	// https://www.rfc-editor.org/rfc/rfc5126#section-6.2.1
+// requiresTimestampEnrichment reports whether the policy requires timestamp
+// tokens to be enriched with TSU certificate and revocation references
+// (RFC 5126 §6.2.1/§6.2.2). Policies at AD-RC level and above carry refs
+// that are placed inside each timestamp token's unsignedAttrs.
+func requiresTimestampEnrichment(names []AttributeName) bool {
 	for _, name := range names {
 		if name == CertificateRefsAttr || name == RevocationRefsAttr || name == EscTimeStampAttr || name == ArchiveTimeStampV2Attr {
 			return true
@@ -275,20 +276,25 @@ func (b *unsignedAttributeBuild) stampAndWrap(
 }
 
 func (b *unsignedAttributeBuild) enrichTimestampToken(ctx context.Context, tokenDER []byte) ([]byte, error) {
-	if b.resolver == nil {
+	if b.resolver == nil || !b.enrichTimestampTokens {
 		slog.Info("cades: timestamp token enrichment not required")
 		return tokenDER, nil
 	}
+	return applyTokenEnrichment(ctx, tokenDER, b.resolver, b.enrichTimestampValues)
+}
 
-	material, err := b.resolver.AddTimestampToken(ctx, tokenDER)
+// applyTokenEnrichment adds TSA chain certificate/revocation references (and
+// optionally values) as unsigned attributes inside the timestamp token's
+// SignerInfo. The TSA signature remains valid because these are unsigned attrs.
+//
+// RFC 5126 §6.2.1/§6.2.2 — TSU certificate and revocation references shall be
+// placed in the unsignedAttrs of the relevant timestamp token's SignerInfo.
+func applyTokenEnrichment(ctx context.Context, tokenDER []byte, resolver *validation.SignatureTrustResolver, withValues bool) ([]byte, error) {
+	material, err := resolver.AddTimestampToken(ctx, tokenDER)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve timestamp trust material: %w", err)
 	}
 	if material == nil {
-		return tokenDER, nil
-	}
-	if !b.enrichTimestampTokens {
-		slog.Info("cades: timestamp token enrichment not required")
 		return tokenDER, nil
 	}
 
@@ -301,12 +307,8 @@ func (b *unsignedAttributeBuild) enrichTimestampToken(ctx context.Context, token
 		return nil, fmt.Errorf("failed to build timestamp revocation refs: %w", err)
 	}
 
-	// RFC 5126 6.2.1/6.2.2 places TSU certificate/revocation references
-	// in the signedData of the relevant timestamp token, under signerInfos
-	// unsignedAttrs. The TSA signature is preserved because these attributes
-	// are unsigned CMS attributes.
 	var certValuesDER, revocationValuesDER []byte
-	if b.enrichTimestampValues {
+	if withValues {
 		certValuesDER, err = BuildCertificateValues(material.Chain)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build timestamp cert values: %w", err)
@@ -317,13 +319,7 @@ func (b *unsignedAttributeBuild) enrichTimestampToken(ctx context.Context, token
 		}
 	}
 
-	enriched, err := EnrichTimestampTokenWithRefs(
-		tokenDER,
-		certRefsDER,
-		revocationRefsDER,
-		certValuesDER,
-		revocationValuesDER,
-	)
+	enriched, err := EnrichTimestampTokenWithRefs(tokenDER, certRefsDER, revocationRefsDER, certValuesDER, revocationValuesDER)
 	if err != nil {
 		return nil, err
 	}
@@ -333,6 +329,5 @@ func (b *unsignedAttributeBuild) enrichTimestampToken(ctx context.Context, token
 		"certificate_values", len(certValuesDER),
 		"revocation_values", len(revocationValuesDER),
 	)
-
 	return enriched, nil
 }

@@ -39,12 +39,19 @@ type chainConfig struct {
 	includeICPBrasilPolicy bool
 	leafIssuingCertURLs    []string
 	leafCRLDistributionPts []string
+	leafSerial             *big.Int
 }
 
 func WithExpiredLeaf() ChainOption {
 	return func(c *chainConfig) {
 		c.leafNotBefore = c.now.Add(-48 * time.Hour)
 		c.leafNotAfter = c.now.Add(-24 * time.Hour)
+	}
+}
+
+func WithLeafSerialNumber(serial *big.Int) ChainOption {
+	return func(c *chainConfig) {
+		c.leafSerial = serial
 	}
 }
 
@@ -112,9 +119,14 @@ func NewChain(t testing.TB, opts ...ChainOption) Chain {
 	}
 	intermediate := createCertificate(t, intermediateTemplate, root, &intermediateKey.PublicKey, rootKey)
 
+	leafSerial := big.NewInt(3)
+	if cfg.leafSerial != nil {
+		leafSerial = cfg.leafSerial
+	}
+
 	leafKey := newRSAKey(t)
 	leafTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(3),
+		SerialNumber:          leafSerial,
 		Subject:               pkix.Name{CommonName: "signer-engine-e2e-leaf"},
 		NotBefore:             cfg.leafNotBefore,
 		NotAfter:              cfg.leafNotAfter,

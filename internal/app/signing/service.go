@@ -82,10 +82,29 @@ func (s Service) signCades(request Request, credential signer.Credential) (Respo
 		Now:                    s.Now,
 	}
 
-	signature, err := signer.Sign(request.Data)
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to sign: %w", err)
+	var signature []byte
+
+	switch request.Operation {
+	case "", OperationSign:
+		signature, err = signer.Sign(request.Data)
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to sign: %w", err)
+		}
+	case OperationCoSign:
+		existingCMS := request.Data
+		var originalData []byte
+		if len(request.ExistingSignature) > 0 {
+			existingCMS = request.ExistingSignature
+			originalData = request.Data
+		}
+		signature, err = signer.CoSign(existingCMS, originalData)
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to co-sign: %w", err)
+		}
+	default:
+		return Response{}, fmt.Errorf("unsupported operation: %s", request.Operation)
 	}
+
 	slog.Info("signing: signature completed", "bytes", len(signature))
 
 	return Response{Signature: signature}, nil

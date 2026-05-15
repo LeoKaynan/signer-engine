@@ -55,6 +55,53 @@ func TestPKCS12CAdESRejectsInvalidSigningCertificate(t *testing.T) {
 	}
 }
 
+func TestCAdESCoSignRejectsDuplicateCertificate(t *testing.T) {
+	chain := fixtures.NewChain(t)
+	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
+	content := []byte("co-sign duplicate certificate rejection e2e")
+	service := newPolicyService(t, chain, defaultSigningTime)
+
+	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
+		t.Run(string(mode), func(t *testing.T) {
+			first, err := service.Sign(signing.Request{
+				Operation:          signing.OperationSign,
+				Data:               content,
+				CredentialProvider: signing.CredentialProviderPKCS12,
+				PKCS12Data:         p12,
+				PKCS12Pass:         fixtures.DefaultPKCS12Password,
+				Format:             signing.FormatCades,
+				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Mode:               mode,
+			})
+			if err != nil {
+				t.Fatalf("first Sign failed: %v", err)
+			}
+
+			var coSignData []byte
+			var existingSig []byte
+			if mode == signing.ModeAttached {
+				coSignData = first.Signature
+			} else {
+				coSignData = content
+				existingSig = first.Signature
+			}
+
+			_, err = service.Sign(signing.Request{
+				Operation:          signing.OperationCoSign,
+				Data:               coSignData,
+				ExistingSignature:  existingSig,
+				CredentialProvider: signing.CredentialProviderPKCS12,
+				PKCS12Data:         p12,
+				PKCS12Pass:         fixtures.DefaultPKCS12Password,
+				Format:             signing.FormatCades,
+				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Mode:               mode,
+			})
+			utils.RequireErrorContains(t, err, "certificate already present in signature")
+		})
+	}
+}
+
 func TestPKCS12CAdESPAADRTv24RequiresTimeStampProvider(t *testing.T) {
 	chain := fixtures.NewChain(t)
 	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
