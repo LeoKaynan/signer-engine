@@ -2,24 +2,26 @@ package cades
 
 import (
 	"context"
+	"encoding/asn1"
 	"fmt"
 	"log/slog"
 
 	"signer-engine/internal/signature/cms"
+	"signer-engine/internal/signature/signaturepolicy"
 	"signer-engine/internal/validation"
 )
 
 func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
-	if s.Policy == nil || len(s.Policy.UnsignedAttributeNames()) == 0 {
+	if s.Policy == nil || s.Policy.Level() < signaturepolicy.LevelT {
 		slog.Info("cades: no unsigned attributes required")
 		return nil
 	}
-	names := s.Policy.UnsignedAttributeNames()
-	slog.Info("cades: unsigned attributes required", "count", len(names), "names", names)
+	level := s.Policy.Level()
+	slog.Info("cades: unsigned attributes required", "level", level)
 
 	return func(ctx cms.UnsignedAttributeContext) ([]cms.Attribute, error) {
 		var resolver *validation.SignatureTrustResolver
-		if requiresTimestampEnrichment(names) || requiresValidationValues(names) {
+		if level >= signaturepolicy.LevelV {
 			if s.TrustMaterialExtractor == nil {
 				return nil, fmt.Errorf("trust material extractor is required")
 			}
@@ -30,81 +32,84 @@ func (s *Signer) unsignedAttributeBuilder() cms.UnsignedAttributeBuilder {
 		}
 
 		builder := unsignedAttributeBuild{
-			signer:                s,
-			resolver:              resolver,
-			ctx:                   ctx,
-			enrichTimestampTokens: requiresTimestampEnrichment(names),
-			enrichTimestampValues: requiresValidationValues(names),
+			signer:   s,
+			resolver: resolver,
+			ctx:      ctx,
+			level:    level,
 		}
-		return builder.build(names)
+		return builder.build()
 	}
-}
-
-// requiresTimestampEnrichment reports whether the policy requires timestamp
-// tokens to be enriched with TSU certificate and revocation references
-// (RFC 5126 §6.2.1/§6.2.2). Policies at AD-RC level and above carry refs
-// that are placed inside each timestamp token's unsignedAttrs.
-func requiresTimestampEnrichment(names []AttributeName) bool {
-	for _, name := range names {
-		if name == CertificateRefsAttr || name == RevocationRefsAttr || name == EscTimeStampAttr || name == ArchiveTimeStampV2Attr {
-			return true
-		}
-	}
-	return false
-}
-
-func requiresValidationValues(names []AttributeName) bool {
-	for _, name := range names {
-		if name == CertValuesAttr || name == RevocationValuesAttr {
-			return true
-		}
-	}
-	return false
 }
 
 type unsignedAttributeBuild struct {
-	signer                *Signer
-	resolver              *validation.SignatureTrustResolver
-	ctx                   cms.UnsignedAttributeContext
-	enrichTimestampTokens bool
-	enrichTimestampValues bool
+	signer   *Signer
+	resolver *validation.SignatureTrustResolver
+	ctx      cms.UnsignedAttributeContext
+	level    signaturepolicy.Level
 }
 
-func (b *unsignedAttributeBuild) build(names []AttributeName) ([]cms.Attribute, error) {
+func (b *unsignedAttributeBuild) build() ([]cms.Attribute, error) {
 	var attrs []cms.Attribute
 
-	for _, name := range names {
-		slog.Info("cades: building unsigned attribute", "name", name)
-		attr, err := b.buildOne(name, attrs)
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, attr)
-		slog.Info("cades: unsigned attribute built", "name", name)
+	// LevelT+: signature timestamp
+	attr, err := b.signatureTimeStampToken()
+	if err != nil {
+		return nil, err
 	}
+	attrs = append(attrs, attr)
+
+	if b.level < signaturepolicy.LevelV {
+		return attrs, nil
+	}
+
+	// LevelV+: certificate refs, revocation refs, esc timestamp
+	certRefs, err := b.certificateRefs()
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, certRefs)
+
+	revRefs, err := b.revocationRefs()
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, revRefs)
+
+	escTS, err := b.escTimeStamp(attrs)
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, escTS)
+
+	if b.level < signaturepolicy.LevelC {
+		return attrs, nil
+	}
+
+	// LevelC+: certificate values, revocation values
+	certVals, err := b.certValues()
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, certVals)
+
+	revVals, err := b.revocationValues()
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, revVals)
+
+	if b.level < signaturepolicy.LevelA {
+		return attrs, nil
+	}
+
+	// LevelA: archive timestamp v2
+	atsv2, err := b.archiveTimeStampV2(attrs)
+	if err != nil {
+		return nil, err
+	}
+	attrs = append(attrs, atsv2)
 
 	return attrs, nil
-}
-
-func (b *unsignedAttributeBuild) buildOne(name AttributeName, previousAttrs []cms.Attribute) (cms.Attribute, error) {
-	switch name {
-	case SignatureTimeStampTokenAttr:
-		return b.signatureTimeStampToken()
-	case CertificateRefsAttr:
-		return b.certificateRefs()
-	case RevocationRefsAttr:
-		return b.revocationRefs()
-	case EscTimeStampAttr:
-		return b.escTimeStamp(previousAttrs)
-	case CertValuesAttr:
-		return b.certValues()
-	case RevocationValuesAttr:
-		return b.revocationValues()
-	case ArchiveTimeStampV2Attr:
-		return b.archiveTimeStampV2(previousAttrs)
-	default:
-		return cms.Attribute{}, fmt.Errorf("unsupported unsigned attribute: %s", name)
-	}
 }
 
 func (b *unsignedAttributeBuild) signatureTimeStampToken() (cms.Attribute, error) {
@@ -116,7 +121,7 @@ func (b *unsignedAttributeBuild) signatureTimeStampToken() (cms.Attribute, error
 		context.Background(),
 		b.ctx.Signature,
 		"signature timestamp",
-		SignatureTimeStampTokenAttribute,
+		cms.IdSignatureTimeStampToken,
 	)
 }
 
@@ -136,18 +141,11 @@ func (b *unsignedAttributeBuild) certificateRefs() (cms.Attribute, error) {
 	if err != nil {
 		return cms.Attribute{}, err
 	}
-
 	refsDER, err := BuildCertificateRefs(material.Chain)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to build certificate refs: %w", err)
 	}
-
-	attr, err := CertificateRefsAttribute(refsDER)
-	if err != nil {
-		return cms.Attribute{}, fmt.Errorf("failed to marshal certificate refs attribute: %w", err)
-	}
-
-	return attr, nil
+	return cms.RawAttribute(IdCertificateRefs, refsDER), nil
 }
 
 func (b *unsignedAttributeBuild) revocationRefs() (cms.Attribute, error) {
@@ -155,18 +153,11 @@ func (b *unsignedAttributeBuild) revocationRefs() (cms.Attribute, error) {
 	if err != nil {
 		return cms.Attribute{}, err
 	}
-
 	refsDER, err := BuildRevocationRefs(material.CRLs)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to build revocation refs: %w", err)
 	}
-
-	attr, err := RevocationRefsAttribute(refsDER)
-	if err != nil {
-		return cms.Attribute{}, fmt.Errorf("failed to marshal revocation refs attribute: %w", err)
-	}
-
-	return attr, nil
+	return cms.RawAttribute(IdRevocationRefs, refsDER), nil
 }
 
 func (b *unsignedAttributeBuild) certValues() (cms.Attribute, error) {
@@ -174,18 +165,11 @@ func (b *unsignedAttributeBuild) certValues() (cms.Attribute, error) {
 	if err != nil {
 		return cms.Attribute{}, err
 	}
-
 	valuesDER, err := BuildCertificateValues(material.Chain)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to build cert values: %w", err)
 	}
-
-	attr, err := CertValuesAttribute(valuesDER)
-	if err != nil {
-		return cms.Attribute{}, fmt.Errorf("failed to marshal cert values attribute: %w", err)
-	}
-
-	return attr, nil
+	return cms.RawAttribute(IdCertValues, valuesDER), nil
 }
 
 func (b *unsignedAttributeBuild) revocationValues() (cms.Attribute, error) {
@@ -193,18 +177,11 @@ func (b *unsignedAttributeBuild) revocationValues() (cms.Attribute, error) {
 	if err != nil {
 		return cms.Attribute{}, err
 	}
-
 	valuesDER, err := BuildRevocationValues(material.CRLs)
 	if err != nil {
 		return cms.Attribute{}, fmt.Errorf("failed to build revocation values: %w", err)
 	}
-
-	attr, err := RevocationValuesAttribute(valuesDER)
-	if err != nil {
-		return cms.Attribute{}, fmt.Errorf("failed to marshal revocation values attribute: %w", err)
-	}
-
-	return attr, nil
+	return cms.RawAttribute(IdRevocationValues, valuesDER), nil
 }
 
 func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cms.Attribute, error) {
@@ -222,7 +199,7 @@ func (b *unsignedAttributeBuild) escTimeStamp(previousAttrs []cms.Attribute) (cm
 		context.Background(),
 		input,
 		"esc timestamp",
-		EscTimeStampAttribute,
+		IdEscTimeStamp,
 	)
 }
 
@@ -241,7 +218,7 @@ func (b *unsignedAttributeBuild) archiveTimeStampV2(previousAttrs []cms.Attribut
 		context.Background(),
 		input,
 		"archive timestamp v2",
-		ArchiveTimeStampV2Attribute,
+		IdArchiveTimeStampV2,
 	)
 }
 
@@ -249,7 +226,7 @@ func (b *unsignedAttributeBuild) stampAndWrap(
 	ctx context.Context,
 	input []byte,
 	name string,
-	factory func([]byte) (cms.Attribute, error),
+	id asn1.ObjectIdentifier,
 ) (cms.Attribute, error) {
 	slog.Info("cades: requesting timestamp", "name", name, "input_bytes", len(input))
 	token, err := b.signer.TimeStampProvider.Stamp(
@@ -267,20 +244,15 @@ func (b *unsignedAttributeBuild) stampAndWrap(
 		return cms.Attribute{}, fmt.Errorf("failed to enrich %s token: %w", name, err)
 	}
 
-	attr, err := factory(tokenDER)
-	if err != nil {
-		return cms.Attribute{}, fmt.Errorf("failed to marshal %s attribute: %w", name, err)
-	}
-
-	return attr, nil
+	return cms.RawAttribute(id, tokenDER), nil
 }
 
 func (b *unsignedAttributeBuild) enrichTimestampToken(ctx context.Context, tokenDER []byte) ([]byte, error) {
-	if b.resolver == nil || !b.enrichTimestampTokens {
+	if b.resolver == nil || b.level < signaturepolicy.LevelV {
 		slog.Info("cades: timestamp token enrichment not required")
 		return tokenDER, nil
 	}
-	return applyTokenEnrichment(ctx, tokenDER, b.resolver, b.enrichTimestampValues)
+	return applyTokenEnrichment(ctx, tokenDER, b.resolver, b.level >= signaturepolicy.LevelC)
 }
 
 // applyTokenEnrichment adds TSA chain certificate/revocation references (and

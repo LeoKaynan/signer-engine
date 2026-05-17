@@ -1,19 +1,22 @@
 package icpbrasil
 
 import (
+	"crypto/x509"
 	"encoding/asn1"
 	"errors"
 	"fmt"
 
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/cms"
+	"signer-engine/internal/signature/pades"
+	"signer-engine/internal/signature/signaturepolicy"
 )
 
 var _ cades.Policy = (*cadesPolicy)(nil)
+var _ pades.Policy = (*padesPolicy)(nil)
 
 type cadesPolicy struct {
 	icpBrasilBase
-
 	info PolicyInfo
 }
 
@@ -22,55 +25,73 @@ func (p cadesPolicy) Identifier() asn1.ObjectIdentifier {
 }
 
 func (p cadesPolicy) SignedAttributes(ctx cades.SigningContext) ([]cms.Attribute, error) {
-	if ctx.Certificate == nil {
-		return nil, errors.New("certificate is required")
-	}
-
-	attrs := []cms.Attribute{}
-
-	for _, required := range p.info.RequiredAttributes {
-		switch required {
-		case cades.SigningCertificateV2Attr:
-			attr, err := cades.SigningCertificateV2Attribute(ctx.Certificate)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal signing certificate v2 attribute: %w", err)
-			}
-			attrs = append(attrs, attr)
-		case cades.PolicyIdentifierAttr:
-			attr, err := cades.PolicyIdentifierAttribute(p.Identifier(), p.info.Hash, p.info.URI)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal policy identifier attribute: %w", err)
-			}
-			attrs = append(attrs, attr)
-		default:
-			return nil, fmt.Errorf("unsupported attribute: %s", required)
-		}
-	}
-
-	return attrs, nil
+	return buildICPBrasilSignedAttrs(ctx.Certificate, p.info.policyBase)
 }
 
-func (p cadesPolicy) UnsignedAttributeNames() []cades.AttributeName {
-	return append([]cades.AttributeName(nil), p.info.RequiredUnsignedAttributes...)
+func (p cadesPolicy) Level() signaturepolicy.Level {
+	return p.info.Level
 }
 
-func NewPolicy(name cades.PolicyName) (cades.Policy, error) {
-	return newPolicy(name, icpBrasilBase{})
+func NewCAdESPolicy(name signaturepolicy.PolicyName) (cades.Policy, error) {
+	return newCAdESPolicy(name, icpBrasilBase{})
 }
 
-func NewPolicyWithRootsPEM(name cades.PolicyName, rootsPEM []byte) (cades.Policy, error) {
+func NewCAdESPolicyWithRootsPEM(name signaturepolicy.PolicyName, rootsPEM []byte) (cades.Policy, error) {
 	roots := append([]byte(nil), rootsPEM...)
-	return newPolicy(name, icpBrasilBase{
+	return newCAdESPolicy(name, icpBrasilBase{
 		rootPEM: func() ([]byte, error) {
 			return append([]byte(nil), roots...), nil
 		},
 	})
 }
 
-func newPolicy(name cades.PolicyName, base icpBrasilBase) (cades.Policy, error) {
-	info, ok := policies[name]
+func newCAdESPolicy(name signaturepolicy.PolicyName, base icpBrasilBase) (cades.Policy, error) {
+	info, ok := cadesPolicies[name]
 	if !ok {
-		return nil, fmt.Errorf("policy not found: %s", name)
+		return nil, fmt.Errorf("cades policy not found: %s", name)
 	}
 	return &cadesPolicy{icpBrasilBase: base, info: info}, nil
+}
+
+func NewPAdESPolicy(name signaturepolicy.PolicyName) (pades.Policy, error) {
+	info, ok := padesPolicies[name]
+	if !ok {
+		return nil, fmt.Errorf("pades policy not found: %s", name)
+	}
+	return &padesPolicy{icpBrasilBase: icpBrasilBase{}, info: info}, nil
+}
+
+type padesPolicy struct {
+	icpBrasilBase
+	info PolicyInfo
+}
+
+func (p padesPolicy) Identifier() asn1.ObjectIdentifier {
+	return p.info.OID
+}
+
+func (p padesPolicy) Level() signaturepolicy.Level {
+	return p.info.Level
+}
+
+func (p padesPolicy) SignedAttributes(ctx pades.SigningContext) ([]cms.Attribute, error) {
+	return buildICPBrasilSignedAttrs(ctx.Certificate, p.info.policyBase)
+}
+
+// buildICPBrasilSignedAttrs builds the two mandatory ICP-Brasil CMS signed
+// attributes (signing-certificate-v2 and signature-policy-identifier) from
+// the given certificate and policy metadata.
+func buildICPBrasilSignedAttrs(cert *x509.Certificate, base policyBase) ([]cms.Attribute, error) {
+	if cert == nil {
+		return nil, errors.New("certificate is required")
+	}
+	sigCertAttr, err := cms.SigningCertificateV2Attribute(cert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build signing certificate v2 attribute: %w", err)
+	}
+	policyAttr, err := cms.PolicyIdentifierAttribute(base.OID, base.Hash, base.URI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build policy identifier attribute: %w", err)
+	}
+	return []cms.Attribute{sigCertAttr, policyAttr}, nil
 }

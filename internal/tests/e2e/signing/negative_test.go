@@ -19,7 +19,7 @@ func TestSigningServiceRejectsInvalidRequests(t *testing.T) {
 		PKCS12Data:         p12,
 		PKCS12Pass:         fixtures.DefaultPKCS12Password,
 		Format:             signing.FormatCades,
-		Policy:             icpbrasil.PolicyNamePAADRBv24,
+		Policy:             icpbrasil.PolicyNamePAADRB,
 		Mode:               signing.ModeAttached,
 	}
 
@@ -58,7 +58,7 @@ func TestSigningServiceRejectsInvalidRequests(t *testing.T) {
 		},
 	}
 
-	service := signing.Service{}
+	service := signing.DefaultService()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			request := baseRequest

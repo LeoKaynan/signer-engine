@@ -19,26 +19,15 @@ func EnrichTimestampTokenWithRefs(
 		return tokenDER, nil
 	}
 
-	certRefsAttr, err := CertificateRefsAttribute(certRefsDER)
-	if err != nil {
-		return nil, err
+	attrs := []cms.Attribute{
+		cms.RawAttribute(IdCertificateRefs, certRefsDER),
+		cms.RawAttribute(IdRevocationRefs, revRefsDER),
 	}
-	revRefsAttr, err := RevocationRefsAttribute(revRefsDER)
-	if err != nil {
-		return nil, err
-	}
-
-	attrs := []cms.Attribute{certRefsAttr, revRefsAttr}
 	if len(certValuesDER) > 0 && len(revValuesDER) > 0 {
-		certValuesAttr, err := CertValuesAttribute(certValuesDER)
-		if err != nil {
-			return nil, err
-		}
-		revValuesAttr, err := RevocationValuesAttribute(revValuesDER)
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, certValuesAttr, revValuesAttr)
+		attrs = append(attrs,
+			cms.RawAttribute(IdCertValues, certValuesDER),
+			cms.RawAttribute(IdRevocationValues, revValuesDER),
+		)
 	}
 
 	// RFC 5126 6.2.1 and 6.2.2 specify that refs for TSUs that issued

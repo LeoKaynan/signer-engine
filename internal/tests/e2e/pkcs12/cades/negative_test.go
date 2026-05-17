@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"signer-engine/internal/app/signing"
-	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/icpbrasil"
+	"signer-engine/internal/signature/signaturepolicy"
 	"signer-engine/internal/tests/fixtures"
 	"signer-engine/internal/tests/utils"
 )
@@ -37,9 +37,7 @@ func TestPKCS12CAdESRejectsInvalidSigningCertificate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			chain := fixtures.NewChain(t, tt.option)
 			p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
-			service := signing.Service{
-				PolicyResolver: policyResolver(t, chain.RootPEM),
-			}
+			service := cadesTestService(t, chain.RootPEM)
 
 			_, err := service.Sign(signing.Request{
 				Data:               []byte("signer-engine pkcs12 cades invalid certificate e2e"),
@@ -47,7 +45,7 @@ func TestPKCS12CAdESRejectsInvalidSigningCertificate(t *testing.T) {
 				PKCS12Data:         p12,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               signing.ModeAttached,
 			})
 			utils.RequireErrorContains(t, err, tt.wantErrSub)
@@ -59,18 +57,17 @@ func TestCAdESCoSignRejectsDuplicateCertificate(t *testing.T) {
 	chain := fixtures.NewChain(t)
 	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
 	content := []byte("co-sign duplicate certificate rejection e2e")
-	service := newPolicyService(t, chain, defaultSigningTime)
+	service := newPolicyService(t, chain, fixtures.DefaultSigningTime)
 
 	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
 		t.Run(string(mode), func(t *testing.T) {
 			first, err := service.Sign(signing.Request{
-				Operation:          signing.OperationSign,
 				Data:               content,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -87,14 +84,13 @@ func TestCAdESCoSignRejectsDuplicateCertificate(t *testing.T) {
 			}
 
 			_, err = service.Sign(signing.Request{
-				Operation:          signing.OperationCoSign,
 				Data:               coSignData,
 				ExistingSignature:  existingSig,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               mode,
 			})
 			utils.RequireErrorContains(t, err, "certificate already present in signature")
@@ -105,17 +101,15 @@ func TestCAdESCoSignRejectsDuplicateCertificate(t *testing.T) {
 func TestPKCS12CAdESPAADRTv24RequiresTimeStampProvider(t *testing.T) {
 	chain := fixtures.NewChain(t)
 	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
-	service := signing.Service{
-		PolicyResolver: policyResolver(t, chain.RootPEM),
-	}
+	service := cadesTestService(t, chain.RootPEM)
 
 	_, err := service.Sign(signing.Request{
-		Data:               []byte("signer-engine pkcs12 cades PA_AD_RT_v2_4 missing tsa e2e"),
+		Data:               []byte("signer-engine pkcs12 cades PA_AD_RT missing tsa e2e"),
 		CredentialProvider: signing.CredentialProviderPKCS12,
 		PKCS12Data:         p12,
 		PKCS12Pass:         fixtures.DefaultPKCS12Password,
 		Format:             signing.FormatCades,
-		Policy:             icpbrasil.PolicyNamePAADRTv24,
+		Policy:             icpbrasil.PolicyNamePAADRT,
 		Mode:               signing.ModeAttached,
 	})
 	utils.RequireErrorContains(t, err, "time stamp provider is required")
@@ -127,35 +121,35 @@ func TestPKCS12CAdESValidationPoliciesRequireDependencies(t *testing.T) {
 
 	tests := []struct {
 		name                   string
-		policy                 cades.PolicyName
+		policy                 signaturepolicy.PolicyName
 		timeStampProvider      bool
 		trustMaterialExtractor bool
 		wantErrSub             string
 	}{
 		{
 			name:                   "AD-RV without timestamp provider",
-			policy:                 icpbrasil.PolicyNamePAADRVv24,
+			policy:                 icpbrasil.PolicyNamePAADRV,
 			timeStampProvider:      false,
 			trustMaterialExtractor: true,
 			wantErrSub:             "time stamp provider is required",
 		},
 		{
 			name:                   "AD-RV without trust material extractor",
-			policy:                 icpbrasil.PolicyNamePAADRVv24,
+			policy:                 icpbrasil.PolicyNamePAADRV,
 			timeStampProvider:      true,
 			trustMaterialExtractor: false,
 			wantErrSub:             "trust material extractor is required",
 		},
 		{
 			name:                   "AD-RC without trust material extractor",
-			policy:                 icpbrasil.PolicyNamePAADRCv24,
+			policy:                 icpbrasil.PolicyNamePAADRC,
 			timeStampProvider:      true,
 			trustMaterialExtractor: false,
 			wantErrSub:             "trust material extractor is required",
 		},
 		{
 			name:                   "AD-RA without trust material extractor",
-			policy:                 icpbrasil.PolicyNamePAADRAv25,
+			policy:                 icpbrasil.PolicyNamePAADRA,
 			timeStampProvider:      true,
 			trustMaterialExtractor: false,
 			wantErrSub:             "trust material extractor is required",
@@ -164,14 +158,12 @@ func TestPKCS12CAdESValidationPoliciesRequireDependencies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := signing.Service{
-				PolicyResolver: policyResolver(t, chain.RootPEM),
-			}
+			service := cadesTestService(t, chain.RootPEM)
 			if tt.timeStampProvider {
-				service.TimeStampProvider = fixtures.NewTimeStampProvider(t)
+				service.Deps.TimeStampProvider = fixtures.NewTimeStampProvider(t)
 			}
 			if tt.trustMaterialExtractor {
-				service.TrustMaterialExtractor = fixtures.NewTrustMaterialExtractor(t, chain)
+				service.Deps.TrustMaterialExtractor = fixtures.NewTrustMaterialExtractor(t, chain)
 			}
 
 			_, err := service.Sign(signing.Request{

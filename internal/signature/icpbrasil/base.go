@@ -67,8 +67,8 @@ func (p icpBrasilBase) ValidateSigningCertificate(cert *x509.Certificate, chain 
 	return nil
 }
 
-func (icpBrasilBase) MandatedHashAlg() crypto.Hash {
-	return crypto.SHA256
+func (icpBrasilBase) MandatedHashAlg() (crypto.Hash, bool) {
+	return crypto.SHA256, true
 }
 
 func icpBrasilRootPEM() ([]byte, error) {

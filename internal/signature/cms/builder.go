@@ -190,18 +190,8 @@ func (b *Builder) buildSignerInfo(data []byte) (SignerInfo, EncapsulatedContentI
 	}
 
 	signedAttrs := []Attribute{
-		{
-			AttrType: OIDContentType,
-			AttrValues: []asn1.RawValue{
-				{FullBytes: contentTypeValueDER},
-			},
-		},
-		{
-			AttrType: OIDMessageDigest,
-			AttrValues: []asn1.RawValue{
-				{FullBytes: messageDigestValueDER},
-			},
-		},
+		RawAttribute(IdContentType, contentTypeValueDER),
+		RawAttribute(IdMessageDigest, messageDigestValueDER),
 	}
 
 	signedAttrs = append(signedAttrs, b.ExtraSignedAttributes...)

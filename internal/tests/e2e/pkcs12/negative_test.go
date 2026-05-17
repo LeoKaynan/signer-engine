@@ -39,7 +39,7 @@ func TestPKCS12ProviderRejectsInvalidInput(t *testing.T) {
 		},
 	}
 
-	service := signing.Service{}
+	service := signing.DefaultService()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := service.Sign(signing.Request{
@@ -48,7 +48,7 @@ func TestPKCS12ProviderRejectsInvalidInput(t *testing.T) {
 				PKCS12Data:         tt.p12,
 				PKCS12Pass:         tt.password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               signing.ModeAttached,
 			})
 			utils.RequireErrorContains(t, err, tt.wantErrSub)

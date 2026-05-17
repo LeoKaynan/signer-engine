@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"signer-engine/internal/cryptoutil"
-	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/cms"
 )
 
@@ -322,7 +321,7 @@ func AssertSignaturePolicyIdentifier(
 		t.Fatalf("expected one signature policy value, got %d", len(attr.AttrValues))
 	}
 
-	var policyID cades.SignaturePolicyIdentifier
+	var policyID cms.SignaturePolicyIdentifier
 	if rest, err := asn1.Unmarshal(attr.AttrValues[0].FullBytes, &policyID); err != nil {
 		t.Fatalf("failed to unmarshal signature policy identifier: %v", err)
 	} else if len(rest) != 0 {

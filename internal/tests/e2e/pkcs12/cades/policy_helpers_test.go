@@ -15,11 +15,11 @@ import (
 	"signer-engine/internal/signature/cades"
 	"signer-engine/internal/signature/cms"
 	"signer-engine/internal/signature/icpbrasil"
+	"signer-engine/internal/signature/signaturepolicy"
 	"signer-engine/internal/tests/fixtures"
 	"signer-engine/internal/tests/utils"
 )
 
-var defaultSigningTime = time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
 
 type policyService struct {
 	Service                signing.Service
@@ -27,15 +27,30 @@ type policyService struct {
 	TrustMaterialExtractor *fixtures.TrustMaterialExtractor
 }
 
-func policyResolver(t testing.TB, rootsPEM []byte) func(cades.PolicyName) (cades.Policy, error) {
+func policyResolver(t testing.TB, rootsPEM []byte) signing.CAdESPolicyResolver {
 	t.Helper()
 
-	return func(name cades.PolicyName) (cades.Policy, error) {
+	return func(name signaturepolicy.PolicyName) (cades.Policy, error) {
 		return fixtures.NewICPBrasilPolicy(t, name, rootsPEM), nil
 	}
 }
 
-func requirePolicyInfo(t testing.TB, name cades.PolicyName) icpbrasil.PolicyInfo {
+// cadesTestService builds a Service configured with only the CAdES factory
+// using the given policy resolver, and the default PKCS#12 credential resolver.
+// Deps are left zero so tests can populate them as needed.
+func cadesTestService(t testing.TB, rootsPEM []byte) signing.Service {
+	t.Helper()
+	return signing.Service{
+		SignerFactories: map[signing.Format]signing.SignerFactory{
+			signing.FormatCades: signing.NewCAdESSignerFactory(policyResolver(t, rootsPEM)),
+		},
+		CredentialResolvers: map[signing.CredentialProvider]signing.CredentialResolver{
+			signing.CredentialProviderPKCS12: signing.NewPKCS12CredentialResolver(),
+		},
+	}
+}
+
+func requirePolicyInfo(t testing.TB, name signaturepolicy.PolicyName) icpbrasil.PolicyInfo {
 	t.Helper()
 
 	info, ok := icpbrasil.PolicyInfoByName(name)
@@ -48,14 +63,9 @@ func requirePolicyInfo(t testing.TB, name cades.PolicyName) icpbrasil.PolicyInfo
 func newPolicyService(t testing.TB, chain fixtures.Chain, signingTime time.Time) policyService {
 	t.Helper()
 
-	return policyService{
-		Service: signing.Service{
-			PolicyResolver: policyResolver(t, chain.RootPEM),
-			Now: func() time.Time {
-				return signingTime
-			},
-		},
-	}
+	svc := cadesTestService(t, chain.RootPEM)
+	svc.Deps.Clock = func() time.Time { return signingTime }
+	return policyService{Service: svc}
 }
 
 func (s policyService) Sign(request signing.Request) (signing.Response, error) {
@@ -67,7 +77,7 @@ func newTimeStampPolicyService(t testing.TB, chain fixtures.Chain, signingTime t
 
 	service := newPolicyService(t, chain, signingTime)
 	service.TimeStampProvider = fixtures.NewTimeStampProvider(t)
-	service.Service.TimeStampProvider = service.TimeStampProvider
+	service.Service.Deps.TimeStampProvider = service.TimeStampProvider
 	return service
 }
 
@@ -76,7 +86,7 @@ func newValidationPolicyService(t testing.TB, chain fixtures.Chain, signingTime 
 
 	service := newTimeStampPolicyService(t, chain, signingTime)
 	service.TrustMaterialExtractor = fixtures.NewTrustMaterialExtractor(t, chain)
-	service.Service.TrustMaterialExtractor = service.TrustMaterialExtractor
+	service.Service.Deps.TrustMaterialExtractor = service.TrustMaterialExtractor
 	return service
 }
 
@@ -97,17 +107,17 @@ func assertCommonCAdES(
 	utils.AssertSHA256DigestAlgorithms(t, signedData, signerInfo)
 	utils.AssertSignedDataCertificates(t, signedData, chain.Leaf, chain.Intermediate)
 	utils.AssertSignerInfoSID(t, signerInfo, chain.Leaf)
-	utils.AssertContentType(t, utils.RequireSignedAttr(t, signerInfo, cms.OIDContentType), cms.OIDData)
-	utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, signerInfo, cms.OIDMessageDigest), content)
-	utils.AssertSigningTime(t, utils.RequireSignedAttr(t, signerInfo, cms.OIDSigningTime), signingTime)
+	utils.AssertContentType(t, utils.RequireSignedAttr(t, signerInfo, cms.IdContentType), cms.OIDData)
+	utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, signerInfo, cms.IdMessageDigest), content)
+	utils.AssertSigningTime(t, utils.RequireSignedAttr(t, signerInfo, cms.IdSigningTime), signingTime)
 	utils.AssertSigningCertificateV2(
 		t,
-		utils.RequireSignedAttr(t, signerInfo, cades.OIDSigningCertificateV2),
+		utils.RequireSignedAttr(t, signerInfo, cms.IdSigningCertificateV2),
 		chain.Leaf,
 	)
 	utils.AssertSignaturePolicyIdentifier(
 		t,
-		utils.RequireSignedAttr(t, signerInfo, cades.OIDSignaturePolicyID),
+		utils.RequireSignedAttr(t, signerInfo, cms.IdSignaturePolicy),
 		policyInfo.OID,
 		policyInfo.Hash,
 		policyInfo.URI,
@@ -152,14 +162,16 @@ func assertUnsignedAttrs(t testing.TB, signerInfo cms.SignerInfo, attrs ...expec
 }
 
 func timestampAttributeCount(policyInfo icpbrasil.PolicyInfo) int {
-	var count int
-	for _, attr := range policyInfo.RequiredUnsignedAttributes {
-		switch attr {
-		case cades.SignatureTimeStampTokenAttr, cades.EscTimeStampAttr, cades.ArchiveTimeStampV2Attr:
-			count++
-		}
+	switch {
+	case policyInfo.Level >= signaturepolicy.LevelA:
+		return 3 // sig timestamp + esc timestamp + archive timestamp v2
+	case policyInfo.Level >= signaturepolicy.LevelV:
+		return 2 // sig timestamp + esc timestamp
+	case policyInfo.Level >= signaturepolicy.LevelT:
+		return 1 // sig timestamp only
+	default:
+		return 0
 	}
-	return count
 }
 
 func assertTimeStampProviderCalls(
@@ -239,10 +251,10 @@ type e2eRevocationValues struct {
 func assertValidationMaterialAttrs(t testing.TB, signerInfo cms.SignerInfo, chain fixtures.Chain, extractor *fixtures.TrustMaterialExtractor) {
 	t.Helper()
 
-	assertCertificateRefs(t, utils.RequireUnsignedAttr(t, signerInfo, cades.OIDCertificateRefs), chain.Intermediate)
-	assertCertificateValues(t, utils.RequireUnsignedAttr(t, signerInfo, cades.OIDCertValues), chain.Intermediate)
-	assertRevocationRefs(t, utils.RequireUnsignedAttr(t, signerInfo, cades.OIDRevocationRefs), extractor.SignerCRLs...)
-	assertRevocationValues(t, utils.RequireUnsignedAttr(t, signerInfo, cades.OIDRevocationValues), extractor.SignerCRLs...)
+	assertCertificateRefs(t, utils.RequireUnsignedAttr(t, signerInfo, cades.IdCertificateRefs), chain.Intermediate)
+	assertCertificateValues(t, utils.RequireUnsignedAttr(t, signerInfo, cades.IdCertValues), chain.Intermediate)
+	assertRevocationRefs(t, utils.RequireUnsignedAttr(t, signerInfo, cades.IdRevocationRefs), extractor.SignerCRLs...)
+	assertRevocationValues(t, utils.RequireUnsignedAttr(t, signerInfo, cades.IdRevocationValues), extractor.SignerCRLs...)
 }
 
 func assertCertificateRefs(t testing.TB, attr cms.Attribute, certs ...*x509.Certificate) {
@@ -338,9 +350,9 @@ func assertAdvancedTimestampInputs(
 	}
 
 	previousEscAttrs := []cms.Attribute{
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDSignatureTimeStampToken),
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDCertificateRefs),
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDRevocationRefs),
+		utils.RequireUnsignedAttr(t, signerInfo, cms.IdSignatureTimeStampToken),
+		utils.RequireUnsignedAttr(t, signerInfo, cades.IdCertificateRefs),
+		utils.RequireUnsignedAttr(t, signerInfo, cades.IdRevocationRefs),
 	}
 	escInput, err := cades.EscTimeStampInput(signerInfo.Signature, previousEscAttrs)
 	if err != nil {
@@ -351,9 +363,9 @@ func assertAdvancedTimestampInputs(
 	}
 
 	previousArchiveAttrs := append(previousEscAttrs,
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDEscTimeStamp),
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDCertValues),
-		utils.RequireUnsignedAttr(t, signerInfo, cades.OIDRevocationValues),
+		utils.RequireUnsignedAttr(t, signerInfo, cades.IdEscTimeStamp),
+		utils.RequireUnsignedAttr(t, signerInfo, cades.IdCertValues),
+		utils.RequireUnsignedAttr(t, signerInfo, cades.IdRevocationValues),
 	)
 	archiveInput, err := cades.ArchiveTimeStampV2Input(cms.UnsignedAttributeContext{
 		Signature:        signerInfo.Signature,

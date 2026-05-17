@@ -2,138 +2,168 @@ package icpbrasil
 
 import (
 	"encoding/asn1"
-	"signer-engine/internal/signature/cades"
+	"signer-engine/internal/signature/signaturepolicy"
 )
 
 // DOC-ICP-15.03 Versão 9.1 PAG 10 - ETSI TR 102 272 6 Signature policy specification in ASN.1 PAG 12
 
 const (
-	PolicyNamePAADRBv24 cades.PolicyName = "PA_AD_RB_v2_4"
-	PolicyNamePAADRTv24 cades.PolicyName = "PA_AD_RT_v2_4"
-	PolicyNamePAADRVv24 cades.PolicyName = "PA_AD_RV_v2_4"
-	PolicyNamePAADRCv24 cades.PolicyName = "PA_AD_RC_v2_4"
-	PolicyNamePAADRAv25 cades.PolicyName = "PA_AD_RA_v2_5"
+	PolicyNamePAADRB signaturepolicy.PolicyName = "PA_AD_RB"
+	PolicyNamePAADRT signaturepolicy.PolicyName = "PA_AD_RT"
+	PolicyNamePAADRV signaturepolicy.PolicyName = "PA_AD_RV"
+	PolicyNamePAADRC signaturepolicy.PolicyName = "PA_AD_RC"
+	PolicyNamePAADRA signaturepolicy.PolicyName = "PA_AD_RA"
 )
 
-type PolicyInfo struct {
-	OID                        asn1.ObjectIdentifier
-	Hash                       []byte
-	URI                        string
-	RequiredAttributes         []cades.AttributeName
-	RequiredUnsignedAttributes []cades.AttributeName
+// policyBase holds the shared metadata (OID, hash, URI) common to both CAdES
+// and PAdES policy definitions.
+type policyBase struct {
+	OID  asn1.ObjectIdentifier
+	Hash []byte
+	URI  string
 }
 
-func PolicyInfoByName(name cades.PolicyName) (PolicyInfo, bool) {
-	info, ok := policies[name]
+// PolicyInfo describes a CAdES policy entry.
+// OID, Hash, and URI are promoted from the embedded policyBase.
+type PolicyInfo struct {
+	policyBase
+	Level signaturepolicy.Level
+}
+
+func PolicyInfoByName(name signaturepolicy.PolicyName) (PolicyInfo, bool) {
+	info, ok := cadesPolicies[name]
 	if !ok {
 		return PolicyInfo{}, false
 	}
-
 	return PolicyInfo{
-		OID:                        append(asn1.ObjectIdentifier(nil), info.OID...),
-		Hash:                       append([]byte(nil), info.Hash...),
-		URI:                        info.URI,
-		RequiredAttributes:         append([]cades.AttributeName(nil), info.RequiredAttributes...),
-		RequiredUnsignedAttributes: append([]cades.AttributeName(nil), info.RequiredUnsignedAttributes...),
+		policyBase: policyBase{
+			OID:  append(asn1.ObjectIdentifier(nil), info.OID...),
+			Hash: append([]byte(nil), info.Hash...),
+			URI:  info.URI,
+		},
+		Level: info.Level,
 	}, true
 }
 
-var policies = map[cades.PolicyName]PolicyInfo{
-	PolicyNamePAADRBv24: {
-		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 1, 2, 4},
-		Hash: []byte{
-			0x1f, 0x3c, 0x90, 0x4c, 0x44, 0xc3, 0x92, 0xfe,
-			0xef, 0x44, 0x7e, 0x21, 0xfa, 0xa7, 0xa0, 0x4e,
-			0x85, 0xd9, 0xc0, 0x15, 0x33, 0x46, 0x32, 0x0f,
-			0x55, 0x7b, 0x70, 0x42, 0xaf, 0x5d, 0xcf, 0x13,
+var cadesPolicies = map[signaturepolicy.PolicyName]PolicyInfo{
+	PolicyNamePAADRB: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 1, 2, 4},
+			Hash: []byte{
+				0x1f, 0x3c, 0x90, 0x4c, 0x44, 0xc3, 0x92, 0xfe,
+				0xef, 0x44, 0x7e, 0x21, 0xfa, 0xa7, 0xa0, 0x4e,
+				0x85, 0xd9, 0xc0, 0x15, 0x33, 0x46, 0x32, 0x0f,
+				0x55, 0x7b, 0x70, 0x42, 0xaf, 0x5d, 0xcf, 0x13,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4.der",
 		},
-		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4.der",
-		RequiredAttributes: []cades.AttributeName{
-			cades.SigningCertificateV2Attr,
-			cades.PolicyIdentifierAttr,
-		},
-		RequiredUnsignedAttributes: nil,
+		Level: signaturepolicy.LevelB,
 	},
-	PolicyNamePAADRTv24: {
-		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 2, 2, 4},
-		Hash: []byte{
-			0xfa, 0x59, 0xdc, 0xa6, 0xd9, 0xc0, 0xe8, 0x08,
-			0xeb, 0x73, 0x97, 0xb2, 0xde, 0x80, 0x0c, 0xce,
-			0x5b, 0x0e, 0x4d, 0xa2, 0xc4, 0x2e, 0x2e, 0x5e,
-			0xf2, 0x49, 0x6a, 0x2c, 0xe6, 0xba, 0xdc, 0xb7,
+	PolicyNamePAADRT: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 2, 2, 4},
+			Hash: []byte{
+				0xfa, 0x59, 0xdc, 0xa6, 0xd9, 0xc0, 0xe8, 0x08,
+				0xeb, 0x73, 0x97, 0xb2, 0xde, 0x80, 0x0c, 0xce,
+				0x5b, 0x0e, 0x4d, 0xa2, 0xc4, 0x2e, 0x2e, 0x5e,
+				0xf2, 0x49, 0x6a, 0x2c, 0xe6, 0xba, 0xdc, 0xb7,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_AD_RT_v2_4.der",
 		},
-		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RT_v2_4.der",
-		RequiredAttributes: []cades.AttributeName{
-			cades.SigningCertificateV2Attr,
-			cades.PolicyIdentifierAttr,
-		},
-		RequiredUnsignedAttributes: []cades.AttributeName{
-			cades.SignatureTimeStampTokenAttr,
-		},
+		Level: signaturepolicy.LevelT,
 	},
-	PolicyNamePAADRVv24: {
-		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 3, 2, 4},
-		Hash: []byte{
-			0xac, 0x8d, 0x32, 0x99, 0x18, 0x9a, 0x58, 0xf8,
-			0x8e, 0xc9, 0x38, 0xd1, 0xb5, 0x91, 0x8f, 0x65,
-			0xbd, 0x9d, 0x1b, 0x22, 0xe1, 0xd1, 0xa3, 0x2b,
-			0x99, 0x8f, 0x3f, 0xdf, 0x07, 0xec, 0x33, 0x42,
+	PolicyNamePAADRV: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 3, 2, 4},
+			Hash: []byte{
+				0xac, 0x8d, 0x32, 0x99, 0x18, 0x9a, 0x58, 0xf8,
+				0x8e, 0xc9, 0x38, 0xd1, 0xb5, 0x91, 0x8f, 0x65,
+				0xbd, 0x9d, 0x1b, 0x22, 0xe1, 0xd1, 0xa3, 0x2b,
+				0x99, 0x8f, 0x3f, 0xdf, 0x07, 0xec, 0x33, 0x42,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_AD_RV_v2_4.der",
 		},
-		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RV_v2_4.der",
-		RequiredAttributes: []cades.AttributeName{
-			cades.SigningCertificateV2Attr,
-			cades.PolicyIdentifierAttr,
-		},
-		RequiredUnsignedAttributes: []cades.AttributeName{
-			cades.SignatureTimeStampTokenAttr,
-			cades.CertificateRefsAttr,
-			cades.RevocationRefsAttr,
-			cades.EscTimeStampAttr,
-		},
+		Level: signaturepolicy.LevelV,
 	},
-	PolicyNamePAADRCv24: {
-		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 4, 2, 4},
-		Hash: []byte{
-			0xab, 0x0d, 0xd3, 0x37, 0x58, 0x0f, 0x7c, 0xcd,
-			0x62, 0x44, 0xe3, 0x0f, 0x2a, 0x29, 0xf2, 0xe9,
-			0x76, 0x14, 0xad, 0x41, 0x18, 0x38, 0xa0, 0xa1,
-			0x17, 0x9d, 0x47, 0x95, 0x04, 0xf5, 0x52, 0x2b,
+	PolicyNamePAADRC: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 4, 2, 4},
+			Hash: []byte{
+				0xab, 0x0d, 0xd3, 0x37, 0x58, 0x0f, 0x7c, 0xcd,
+				0x62, 0x44, 0xe3, 0x0f, 0x2a, 0x29, 0xf2, 0xe9,
+				0x76, 0x14, 0xad, 0x41, 0x18, 0x38, 0xa0, 0xa1,
+				0x17, 0x9d, 0x47, 0x95, 0x04, 0xf5, 0x52, 0x2b,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.der",
 		},
-		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.der",
-		RequiredAttributes: []cades.AttributeName{
-			cades.SigningCertificateV2Attr,
-			cades.PolicyIdentifierAttr,
-		},
-		RequiredUnsignedAttributes: []cades.AttributeName{
-			cades.SignatureTimeStampTokenAttr,
-			cades.CertificateRefsAttr,
-			cades.RevocationRefsAttr,
-			cades.EscTimeStampAttr,
-			cades.CertValuesAttr,
-			cades.RevocationValuesAttr,
-		},
+		Level: signaturepolicy.LevelC,
 	},
-	PolicyNamePAADRAv25: {
-		OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 5, 2, 5},
-		Hash: []byte{
-			0x05, 0x31, 0xee, 0x33, 0x8a, 0xcb, 0x53, 0x36,
-			0x4c, 0x8b, 0x31, 0x6a, 0x11, 0xd9, 0x04, 0x23,
-			0xee, 0x33, 0xe7, 0x14, 0xcb, 0x36, 0x5d, 0x9c,
-			0x45, 0x62, 0xb9, 0x0f, 0xa4, 0x7d, 0x90, 0x99,
+	PolicyNamePAADRA: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 5, 2, 5},
+			Hash: []byte{
+				0x05, 0x31, 0xee, 0x33, 0x8a, 0xcb, 0x53, 0x36,
+				0x4c, 0x8b, 0x31, 0x6a, 0x11, 0xd9, 0x04, 0x23,
+				0xee, 0x33, 0xe7, 0x14, 0xcb, 0x36, 0x5d, 0x9c,
+				0x45, 0x62, 0xb9, 0x0f, 0xa4, 0x7d, 0x90, 0x99,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_AD_RA_v2_5.der",
 		},
-		URI: "http://politicas.icpbrasil.gov.br/PA_AD_RA_v2_5.der",
-		RequiredAttributes: []cades.AttributeName{
-			cades.SigningCertificateV2Attr,
-			cades.PolicyIdentifierAttr,
+		Level: signaturepolicy.LevelA,
+	},
+}
+
+var padesPolicies = map[signaturepolicy.PolicyName]PolicyInfo{
+	PolicyNamePAADRB: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 11, 1, 3},
+			Hash: []byte{
+				0x23, 0xe4, 0xbe, 0x4b, 0x9b, 0x36, 0x21, 0x72,
+				0xe4, 0xeb, 0xb0, 0xe7, 0x2b, 0x86, 0xa1, 0x33,
+				0xec, 0xe5, 0xaa, 0xd8, 0x43, 0xd8, 0x65, 0x1c,
+				0x6e, 0x38, 0xa0, 0xba, 0x3f, 0x08, 0xfc, 0x60,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RB_v1_3.der",
 		},
-		RequiredUnsignedAttributes: []cades.AttributeName{
-			cades.SignatureTimeStampTokenAttr,
-			cades.CertificateRefsAttr,
-			cades.RevocationRefsAttr,
-			cades.EscTimeStampAttr,
-			cades.CertValuesAttr,
-			cades.RevocationValuesAttr,
-			cades.ArchiveTimeStampV2Attr,
+		Level: signaturepolicy.LevelB,
+	},
+	PolicyNamePAADRT: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 12, 1, 3},
+			Hash: []byte{
+				0x21, 0xd6, 0xe8, 0xd9, 0xf8, 0x5e, 0x56, 0x26,
+				0xdc, 0x71, 0x30, 0x73, 0x37, 0xa7, 0xca, 0xbd,
+				0x6f, 0xfe, 0xf8, 0xd0, 0x85, 0x03, 0x87, 0x46,
+				0x77, 0x5c, 0xf0, 0xce, 0x6b, 0xa4, 0xd3, 0xb5,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RT_v1_3.der",
 		},
+		Level: signaturepolicy.LevelT,
+	},
+	PolicyNamePAADRC: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 13, 1, 4},
+			Hash: []byte{
+				0xde, 0xfe, 0x0c, 0xe4, 0xa4, 0x5b, 0xe8, 0xd7,
+				0xbf, 0x0a, 0x62, 0xbf, 0xe7, 0xba, 0xba, 0x53,
+				0x29, 0xb7, 0x66, 0x5e, 0x55, 0x85, 0x56, 0x8d,
+				0xe0, 0x0b, 0x9f, 0x3e, 0x56, 0xc0, 0xce, 0x83,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RC_v1_4.der",
+		},
+		Level: signaturepolicy.LevelC,
+	},
+	PolicyNamePAADRA: {
+		policyBase: policyBase{
+			OID: asn1.ObjectIdentifier{2, 16, 76, 1, 7, 1, 13, 1, 4},
+			Hash: []byte{
+				0x71, 0x2f, 0x18, 0xa9, 0xf0, 0x16, 0x3c, 0x1e,
+				0x90, 0xda, 0x6f, 0xf0, 0xb7, 0x16, 0x55, 0x43,
+				0x37, 0x8a, 0x18, 0xa0, 0xf0, 0x6d, 0x3c, 0xb2,
+				0x16, 0x68, 0x06, 0x7c, 0xac, 0x22, 0x9b, 0xd2,
+			},
+			URI: "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RA_v1_4.der",
+		},
+		Level: signaturepolicy.LevelA,
 	},
 }

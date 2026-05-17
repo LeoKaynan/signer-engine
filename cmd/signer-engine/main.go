@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"signer-engine/internal/app/signing"
-	"signer-engine/internal/signature/cades"
+	"signer-engine/internal/signature/signaturepolicy"
 )
 
 func main() {
@@ -30,15 +30,14 @@ func run(args []string) error {
 func runSign(args []string) error {
 	fs := flag.NewFlagSet("sign", flag.ContinueOnError)
 
-	inPath := fs.String("in", "", "input file to sign")
+	inPath := fs.String("in", "", "input file to sign (PDF for PAdES — signed or not; document or attached CMS for CAdES)")
 	outPath := fs.String("out", "", "output signature file")
-	existingSignaturePath := fs.String("existing-signature", "", "existing signature file to co-sign")
+	existingSignaturePath := fs.String("existing-signature", "", "existing CMS to co-sign (CAdES detached only)")
 	p12Path := fs.String("p12", "", "PKCS#12/PFX credential file")
 	password := fs.String("password", "", "PKCS#12/PFX password")
-	format := fs.String("format", "cades", "signature format: cades")
+	format := fs.String("format", "cades", "signature format: cades or pades")
 	policy := fs.String("policy", "icpbrasil-adrb", "signature policy")
-	mode := fs.String("mode", "detached", "signature mode: attached or detached")
-	operation := fs.String("operation", "sign", "signature operation: sign (default) or co-sign")
+	mode := fs.String("mode", "detached", "signature mode: attached or detached (CAdES only)")
 	credentialProvider := fs.String("credential-provider", "pkcs12", "credential provider: pkcs12")
 
 	if err := fs.Parse(args); err != nil {
@@ -50,15 +49,19 @@ func runSign(args []string) error {
 	if *p12Path == "" {
 		return fmt.Errorf("-p12 is required")
 	}
-
-	isCoSign := signing.Operation(*operation) == signing.OperationCoSign
-	isAttached := signing.Mode(*mode) == signing.ModeAttached
-
-	if isCoSign && *existingSignaturePath == "" {
-		return fmt.Errorf("-existing-signature is required for co-sign")
-	}
-	if (!isCoSign || !isAttached) && *inPath == "" {
+	if *inPath == "" {
 		return fmt.Errorf("-in is required")
+	}
+
+	isAttached := signing.Mode(*mode) == signing.ModeAttached
+	isPAdES := signing.Format(*format) == signing.FormatPades
+	hasExisting := *existingSignaturePath != ""
+
+	if hasExisting && isPAdES {
+		return fmt.Errorf("-existing-signature is not used for PAdES; signing an already-signed PDF (via -in) is detected automatically")
+	}
+	if hasExisting && isAttached {
+		return fmt.Errorf("-existing-signature is not used for attached CAdES co-sign; pass the existing CMS via -in")
 	}
 
 	p12Data, err := os.ReadFile(*p12Path)
@@ -66,31 +69,16 @@ func runSign(args []string) error {
 		return fmt.Errorf("read credential file: %w", err)
 	}
 
-	var requestData []byte
-	var existingSig []byte
+	requestData, err := os.ReadFile(*inPath)
+	if err != nil {
+		return fmt.Errorf("read input file: %w", err)
+	}
 
-	switch {
-	case isCoSign && isAttached:
-		// attached co-sign: Data = CMS existente, documento não é necessário
-		requestData, err = os.ReadFile(*existingSignaturePath)
-		if err != nil {
-			return fmt.Errorf("read existing signature file: %w", err)
-		}
-	case isCoSign && !isAttached:
-		// detached co-sign: Data = documento original, ExistingSignature = CMS existente
-		requestData, err = os.ReadFile(*inPath)
-		if err != nil {
-			return fmt.Errorf("read input file: %w", err)
-		}
+	var existingSig []byte
+	if hasExisting {
 		existingSig, err = os.ReadFile(*existingSignaturePath)
 		if err != nil {
 			return fmt.Errorf("read existing signature file: %w", err)
-		}
-	default:
-		// sign: Data = documento
-		requestData, err = os.ReadFile(*inPath)
-		if err != nil {
-			return fmt.Errorf("read input file: %w", err)
 		}
 	}
 
@@ -101,9 +89,8 @@ func runSign(args []string) error {
 		PKCS12Data:         p12Data,
 		PKCS12Pass:         *password,
 		Format:             signing.Format(*format),
-		Policy:             cades.PolicyName(*policy),
+		Policy:             signaturepolicy.PolicyName(*policy),
 		Mode:               signing.Mode(*mode),
-		Operation:          signing.Operation(*operation),
 	})
 	if err != nil {
 		return err

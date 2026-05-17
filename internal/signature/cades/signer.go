@@ -6,11 +6,10 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"signer-engine/internal/signature/cms"
+	"signer-engine/internal/signature/signaturepolicy"
 	"signer-engine/internal/signer"
 	"signer-engine/internal/tsa"
 	"signer-engine/internal/validation"
-	"slices"
-	"time"
 )
 
 type Signer struct {
@@ -20,45 +19,51 @@ type Signer struct {
 	Policy                 Policy
 	TimeStampProvider      tsa.Provider
 	TrustMaterialExtractor validation.TrustMaterialExtractor
-	Now                    func() time.Time
+	Clock                  signaturepolicy.Clock
 }
 
-// strippedATSv2Policy wraps a Policy and removes ArchiveTimeStampV2Attr from
-// UnsignedAttributeNames. Used during co-signing so the fresh co-signer is built
-// with the full policy attribute set minus ATSv2; renewal is applied afterwards
-// for every signer in the merged CMS (see CoSign and renewAllArchiveTimeStamps).
+// strippedATSv2Policy wraps a Policy and caps its Level at LevelC, excluding
+// the ATSv2 step. Used during co-signing so the fresh co-signer is built
+// without ATSv2; renewal is applied afterwards for every signer in the merged
+// CMS (see CoSign and renewAllArchiveTimeStamps).
 type strippedATSv2Policy struct{ Policy }
 
-func (p strippedATSv2Policy) UnsignedAttributeNames() []AttributeName {
-	src := p.Policy.UnsignedAttributeNames()
-	out := make([]AttributeName, 0, len(src))
-	for _, n := range src {
-		if n != ArchiveTimeStampV2Attr {
-			out = append(out, n)
-		}
+func (p strippedATSv2Policy) Level() signaturepolicy.Level {
+	l := p.Policy.Level()
+	if l > signaturepolicy.LevelC {
+		return signaturepolicy.LevelC
 	}
-	return out
-}
-
-func (s *Signer) now() time.Time {
-	if s.Now != nil {
-		return s.Now()
-	}
-	return time.Now().UTC()
+	return l
 }
 
 func (s *Signer) policyHasArchiveTimeStamp() bool {
-	if s.Policy == nil {
-		return false
-	}
-
-	return slices.Contains(
-		s.Policy.UnsignedAttributeNames(),
-		ArchiveTimeStampV2Attr,
-	)
+	return s.Policy != nil && s.Policy.Level() >= signaturepolicy.LevelA
 }
 
-func (s *Signer) Sign(data []byte) ([]byte, error) {
+// Sign implements signaturepolicy.Signer. It transparently dispatches between
+// fresh signing and co-signing based on the input:
+//
+//   - input.ExistingSignature non-empty → detached co-sign over input.Data.
+//   - input.Data is itself a CMS SignedData and the signer is attached →
+//     attached co-sign (the embedded content is the document).
+//   - otherwise → fresh signature over input.Data.
+func (s *Signer) Sign(input signaturepolicy.SignInput) ([]byte, error) {
+	if len(input.ExistingSignature) > 0 {
+		return s.coSign(input.ExistingSignature, input.Data)
+	}
+	if !s.Detached && IsAlreadySigned(input.Data) {
+		return s.coSign(input.Data, nil)
+	}
+	return s.signFresh(input.Data)
+}
+
+// SignFresh produces a single-signer CMS over data. Exposed for callers that
+// want explicit control; the unified Sign(SignInput) is the recommended entry.
+func (s *Signer) SignFresh(data []byte) ([]byte, error) {
+	return s.signFresh(data)
+}
+
+func (s *Signer) signFresh(data []byte) ([]byte, error) {
 	builder, err := s.prepareBuilder()
 	if err != nil {
 		return nil, err
@@ -66,7 +71,7 @@ func (s *Signer) Sign(data []byte) ([]byte, error) {
 	return builder.Build(data)
 }
 
-// CoSign adds a parallel signature (co-assinatura) to existingSignature.
+// coSign adds a parallel signature (co-assinatura) to existingSignature.
 //
 // RFC 5652 §5.1 allows SignedData.signerInfos to carry multiple SignerInfo
 // entries; each signer independently signs the same content.
@@ -81,7 +86,7 @@ func (s *Signer) Sign(data []byte) ([]byte, error) {
 //
 // Note: contra-assinaturas (countersignature attributes) are explicitly
 // prohibited after ATSv2 by DOC-ICP-15.03 §Anexo 1, Tabela A.3, Nota.
-func (s *Signer) CoSign(existingSignature []byte, originalData []byte) ([]byte, error) {
+func (s *Signer) coSign(existingSignature []byte, originalData []byte) ([]byte, error) {
 	coSigner := *s
 	if s.policyHasArchiveTimeStamp() {
 		coSigner.Policy = strippedATSv2Policy{s.Policy}
@@ -94,7 +99,7 @@ func (s *Signer) CoSign(existingSignature []byte, originalData []byte) ([]byte, 
 
 	merged, err := builder.CoSign(existingSignature, originalData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to co-sign: %w", err)
+		return nil, fmt.Errorf("cades: co-sign: %w", err)
 	}
 
 	if !s.policyHasArchiveTimeStamp() {
@@ -133,8 +138,7 @@ func (s *Signer) renewAllArchiveTimeStamps(mergedCMS []byte, originalContent []b
 		data = signedData.EncapContentInfo.EContent
 	}
 
-	names := s.Policy.UnsignedAttributeNames()
-	withValues := requiresValidationValues(names)
+	withValues := s.Policy.Level() >= signaturepolicy.LevelC
 
 	for i := range signedData.SignerInfos {
 		si := &signedData.SignerInfos[i]
@@ -142,7 +146,7 @@ func (s *Signer) renewAllArchiveTimeStamps(mergedCMS []byte, originalContent []b
 		// Collect unsigned attrs without any existing ATSv2.
 		var attrsWithoutATSv2 []cms.Attribute
 		for _, attr := range si.UnsignedAttrs {
-			if !attr.AttrType.Equal(OIDArchiveTimeStampV2) {
+			if !attr.AttrType.Equal(IdArchiveTimeStampV2) {
 				attrsWithoutATSv2 = append(attrsWithoutATSv2, attr)
 			}
 		}
@@ -175,12 +179,7 @@ func (s *Signer) renewAllArchiveTimeStamps(mergedCMS []byte, originalContent []b
 			}
 		}
 
-		atsv2Attr, err := ArchiveTimeStampV2Attribute(tokenDER)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create ATSv2 attribute for signer %d: %w", i, err)
-		}
-
-		si.UnsignedAttrs = append(attrsWithoutATSv2, atsv2Attr)
+		si.UnsignedAttrs = append(attrsWithoutATSv2, cms.RawAttribute(IdArchiveTimeStampV2, tokenDER))
 	}
 
 	signedDataBytes, err := asn1.Marshal(signedData)
@@ -207,12 +206,12 @@ func (s *Signer) enrichATSv2Token(tokenDER []byte, withValues bool) ([]byte, err
 
 func (s *Signer) prepareBuilder() (*cms.Builder, error) {
 	if s.HashAlg == 0 {
-		return nil, fmt.Errorf("hash algorithm is required")
+		return nil, fmt.Errorf("cades: hash algorithm is required")
 	}
 
-	signingTime, err := SigningTimeAttribute(s.now())
+	signingTime, err := cms.SigningTimeAttribute(s.Clock.Now())
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal signing time: %w", err)
+		return nil, fmt.Errorf("cades: build signing time attribute: %w", err)
 	}
 
 	extras := []cms.Attribute{signingTime}
@@ -224,16 +223,14 @@ func (s *Signer) prepareBuilder() (*cms.Builder, error) {
 		Detached:    s.Detached,
 	}
 
+	if err := signaturepolicy.ValidatePolicyPrerequisites(s.Policy, s.HashAlg, ctx.Certificate, ctx.Chain); err != nil {
+		return nil, fmt.Errorf("cades: %w", err)
+	}
+
 	if s.Policy != nil {
-		if err := s.Policy.ValidateSigningCertificate(ctx.Certificate, ctx.Chain); err != nil {
-			return nil, fmt.Errorf("failed to validate signing certificate: %w", err)
-		}
-		if mand := s.Policy.MandatedHashAlg(); mand != 0 && mand != s.HashAlg {
-			return nil, fmt.Errorf("hash algorithm does not match the mandated hash algorithm")
-		}
 		policyAttrs, err := s.Policy.SignedAttributes(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build policy signed attributes: %w", err)
+			return nil, fmt.Errorf("cades: build policy signed attributes: %w", err)
 		}
 		extras = append(extras, policyAttrs...)
 	}

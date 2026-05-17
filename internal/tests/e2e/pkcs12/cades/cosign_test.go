@@ -21,8 +21,8 @@ func TestCAdESCoSign(t *testing.T) {
 	p12Second := fixtures.NewPKCS12(t, chain2, fixtures.DefaultPKCS12Password)
 
 	content := []byte("cades co-sign e2e test content")
-	signingTime := defaultSigningTime
-	policyInfo := requirePolicyInfo(t, icpbrasil.PolicyNamePAADRBv24)
+	signingTime := fixtures.DefaultSigningTime
+	policyInfo := requirePolicyInfo(t, icpbrasil.PolicyNamePAADRB)
 
 	service1 := newPolicyService(t, chain1, signingTime)
 	service2 := newPolicyService(t, chain2, signingTime)
@@ -35,13 +35,12 @@ func TestCAdESCoSign(t *testing.T) {
 	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
 		t.Run(string(mode), func(t *testing.T) {
 			firstResp, err := service1.Sign(signing.Request{
-				Operation:          signing.OperationSign,
 				Data:               content,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12First,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -58,14 +57,13 @@ func TestCAdESCoSign(t *testing.T) {
 			}
 
 			coSignResp, err := service2.Sign(signing.Request{
-				Operation:          signing.OperationCoSign,
 				Data:               coSignData,
 				ExistingSignature:  existingSig,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12Second,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -85,13 +83,13 @@ func TestCAdESCoSign(t *testing.T) {
 			// Both signers must have correct messageDigest and policy — order is not guaranteed.
 			leafCerts := []*x509.Certificate{chain1.Leaf, chain2.Leaf}
 			for i, si := range signedData.SignerInfos {
-				utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, si, cms.OIDMessageDigest), content)
+				utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, si, cms.IdMessageDigest), content)
 				utils.AssertSignaturePolicyIdentifier(
 					t,
-					utils.RequireSignedAttr(t, si, cades.OIDSignaturePolicyID),
+					utils.RequireSignedAttr(t, si, cms.IdSignaturePolicy),
 					policyInfo.OID, policyInfo.Hash, policyInfo.URI,
 				)
-				utils.AssertSigningCertificateV2(t, utils.RequireSignedAttr(t, si, cades.OIDSigningCertificateV2), leafCerts[i])
+				utils.AssertSigningCertificateV2(t, utils.RequireSignedAttr(t, si, cms.IdSigningCertificateV2), leafCerts[i])
 			}
 
 			utils.AssertSignedDataCertificates(t, signedData,
@@ -112,7 +110,7 @@ func TestCAdESCoSignWithArchiveTimestampRenewal(t *testing.T) {
 	p12Second := fixtures.NewPKCS12(t, chain2, fixtures.DefaultPKCS12Password)
 
 	content := []byte("cades co-sign archive timestamp renewal e2e")
-	signingTime := defaultSigningTime
+	signingTime := fixtures.DefaultSigningTime
 
 	service1 := newValidationPolicyService(t, chain1, signingTime)
 	service2 := newValidationPolicyService(t, chain2, signingTime)
@@ -125,13 +123,12 @@ func TestCAdESCoSignWithArchiveTimestampRenewal(t *testing.T) {
 	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
 		t.Run(string(mode), func(t *testing.T) {
 			firstResp, err := service1.Sign(signing.Request{
-				Operation:          signing.OperationSign,
 				Data:               content,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12First,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRAv25,
+				Policy:             icpbrasil.PolicyNamePAADRA,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -148,14 +145,13 @@ func TestCAdESCoSignWithArchiveTimestampRenewal(t *testing.T) {
 			}
 
 			coSignResp, err := service2.Sign(signing.Request{
-				Operation:          signing.OperationCoSign,
 				Data:               coSignData,
 				ExistingSignature:  existingSig,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12Second,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRAv25,
+				Policy:             icpbrasil.PolicyNamePAADRA,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -168,7 +164,7 @@ func TestCAdESCoSignWithArchiveTimestampRenewal(t *testing.T) {
 
 			// Both signers must have ATSv2 renewed over the merged certificate set.
 			for i, si := range signedData.SignerInfos {
-				if _, ok := utils.FindUnsignedAttr(si, cades.OIDArchiveTimeStampV2); !ok {
+				if _, ok := utils.FindUnsignedAttr(si, cades.IdArchiveTimeStampV2); !ok {
 					t.Fatalf("signer %d is missing ArchiveTimeStampV2", i)
 				}
 			}
@@ -194,8 +190,8 @@ func TestCAdESCoSignThreeSigners(t *testing.T) {
 	p12Third := fixtures.NewPKCS12(t, chain3, fixtures.DefaultPKCS12Password)
 
 	content := []byte("cades three-signer co-sign e2e")
-	signingTime := defaultSigningTime
-	policyInfo := requirePolicyInfo(t, icpbrasil.PolicyNamePAADRBv24)
+	signingTime := fixtures.DefaultSigningTime
+	policyInfo := requirePolicyInfo(t, icpbrasil.PolicyNamePAADRB)
 
 	service1 := newPolicyService(t, chain1, signingTime)
 	service2 := newPolicyService(t, chain2, signingTime)
@@ -209,13 +205,12 @@ func TestCAdESCoSignThreeSigners(t *testing.T) {
 	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
 		t.Run(string(mode), func(t *testing.T) {
 			firstResp, err := service1.Sign(signing.Request{
-				Operation:          signing.OperationSign,
 				Data:               content,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12First,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRBv24,
+				Policy:             icpbrasil.PolicyNamePAADRB,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -224,12 +219,11 @@ func TestCAdESCoSignThreeSigners(t *testing.T) {
 
 			coSignReq := func(sig []byte, p12 []byte) signing.Request {
 				req := signing.Request{
-					Operation:          signing.OperationCoSign,
 					CredentialProvider: signing.CredentialProviderPKCS12,
 					PKCS12Data:         p12,
 					PKCS12Pass:         fixtures.DefaultPKCS12Password,
 					Format:             signing.FormatCades,
-					Policy:             icpbrasil.PolicyNamePAADRBv24,
+					Policy:             icpbrasil.PolicyNamePAADRB,
 					Mode:               mode,
 				}
 				if mode == signing.ModeAttached {
@@ -257,13 +251,13 @@ func TestCAdESCoSignThreeSigners(t *testing.T) {
 
 			leafCerts := []*x509.Certificate{chain1.Leaf, chain2.Leaf, chain3.Leaf}
 			for i, si := range signedData.SignerInfos {
-				utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, si, cms.OIDMessageDigest), content)
+				utils.AssertMessageDigest(t, utils.RequireSignedAttr(t, si, cms.IdMessageDigest), content)
 				utils.AssertSignaturePolicyIdentifier(
 					t,
-					utils.RequireSignedAttr(t, si, cades.OIDSignaturePolicyID),
+					utils.RequireSignedAttr(t, si, cms.IdSignaturePolicy),
 					policyInfo.OID, policyInfo.Hash, policyInfo.URI,
 				)
-				utils.AssertSigningCertificateV2(t, utils.RequireSignedAttr(t, si, cades.OIDSigningCertificateV2), leafCerts[i])
+				utils.AssertSigningCertificateV2(t, utils.RequireSignedAttr(t, si, cms.IdSigningCertificateV2), leafCerts[i])
 			}
 
 			utils.AssertSignedDataCertificates(t, signedData,
@@ -287,7 +281,7 @@ func TestCAdESCoSignThreeSignersWithArchiveTimestampRenewal(t *testing.T) {
 	p12Third := fixtures.NewPKCS12(t, chain3, fixtures.DefaultPKCS12Password)
 
 	content := []byte("cades three-signer archive timestamp renewal e2e")
-	signingTime := defaultSigningTime
+	signingTime := fixtures.DefaultSigningTime
 
 	service1 := newValidationPolicyService(t, chain1, signingTime)
 	service2 := newValidationPolicyService(t, chain2, signingTime)
@@ -301,13 +295,12 @@ func TestCAdESCoSignThreeSignersWithArchiveTimestampRenewal(t *testing.T) {
 	for _, mode := range []signing.Mode{signing.ModeAttached, signing.ModeDetached} {
 		t.Run(string(mode), func(t *testing.T) {
 			firstResp, err := service1.Sign(signing.Request{
-				Operation:          signing.OperationSign,
 				Data:               content,
 				CredentialProvider: signing.CredentialProviderPKCS12,
 				PKCS12Data:         p12First,
 				PKCS12Pass:         fixtures.DefaultPKCS12Password,
 				Format:             signing.FormatCades,
-				Policy:             icpbrasil.PolicyNamePAADRAv25,
+				Policy:             icpbrasil.PolicyNamePAADRA,
 				Mode:               mode,
 			})
 			if err != nil {
@@ -316,12 +309,11 @@ func TestCAdESCoSignThreeSignersWithArchiveTimestampRenewal(t *testing.T) {
 
 			coSignReq := func(sig []byte, p12 []byte) signing.Request {
 				req := signing.Request{
-					Operation:          signing.OperationCoSign,
 					CredentialProvider: signing.CredentialProviderPKCS12,
 					PKCS12Data:         p12,
 					PKCS12Pass:         fixtures.DefaultPKCS12Password,
 					Format:             signing.FormatCades,
-					Policy:             icpbrasil.PolicyNamePAADRAv25,
+					Policy:             icpbrasil.PolicyNamePAADRA,
 					Mode:               mode,
 				}
 				if mode == signing.ModeAttached {
@@ -349,7 +341,7 @@ func TestCAdESCoSignThreeSignersWithArchiveTimestampRenewal(t *testing.T) {
 
 			// All three signers must have ATSv2 renewed over the full merged certificate set.
 			for i, si := range signedData.SignerInfos {
-				if _, ok := utils.FindUnsignedAttr(si, cades.OIDArchiveTimeStampV2); !ok {
+				if _, ok := utils.FindUnsignedAttr(si, cades.IdArchiveTimeStampV2); !ok {
 					t.Fatalf("signer %d is missing ArchiveTimeStampV2", i)
 				}
 			}
