@@ -572,7 +572,7 @@ func nextSignatureFieldNames(pdf []byte, count int) []string {
 // addDSS appends an incremental update containing a DSS (Document Security Store)
 // with the provided cert and CRL DERs indexed by the VRI key of the last signature.
 // Returns the updated PDF and the VRI key (used later to link the DocTimeStamp into the VRI entry).
-func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime time.Time) ([]byte, string, error) {
+func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime time.Time, pbad *PBADArtifacts) ([]byte, string, error) {
 	vriKey, err := computeVRIKey(signedPDF)
 	if err != nil {
 		return nil, "", err
@@ -597,11 +597,38 @@ func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime t
 	crlObjs, crlRefs := buildDERStreamObjects(crlDERs, &nextObj)
 	objs = append(objs, crlObjs...)
 
+	var (
+		pbadPolicyRef pdfmin.IndirectRef
+		pbadLpaARef   pdfmin.IndirectRef
+		pbadLpaSRef   pdfmin.IndirectRef
+		hasPBAD       bool
+	)
+	if pbad != nil && len(pbad.PolicyArtifact) > 0 && len(pbad.LpaArtifact) > 0 && len(pbad.LpaSignature) > 0 {
+		hasPBAD = true
+
+		policyObjs, policyRefs := buildDERStreamObjects([][]byte{pbad.PolicyArtifact}, &nextObj)
+		objs = append(objs, policyObjs...)
+		pbadPolicyRef = policyRefs[0].(pdfmin.IndirectRef)
+
+		lpaAObjs, lpaARefs := buildDERStreamObjects([][]byte{pbad.LpaArtifact}, &nextObj)
+		objs = append(objs, lpaAObjs...)
+		pbadLpaARef = lpaARefs[0].(pdfmin.IndirectRef)
+
+		lpaSObjs, lpaSRefs := buildDERStreamObjects([][]byte{pbad.LpaSignature}, &nextObj)
+		objs = append(objs, lpaSObjs...)
+		pbadLpaSRef = lpaSRefs[0].(pdfmin.IndirectRef)
+	}
+
 	vriEntry := pdfmin.Dict{
 		pdfmin.Name("Type"): pdfmin.Name("VRI"),
 		pdfmin.Name("Cert"): certRefs,
 		pdfmin.Name("CRL"):  crlRefs,
 		pdfmin.Name("TU"):   pdfmin.String(formatPDFDate(signingTime)),
+	}
+	if hasPBAD {
+		vriEntry[pdfmin.Name("PBAD_PolicyArtifact")] = pbadPolicyRef
+		vriEntry[pdfmin.Name("PBAD_LpaArtifact")] = pbadLpaARef
+		vriEntry[pdfmin.Name("PBAD_LpaSignature")] = pbadLpaSRef
 	}
 
 	dssDict := pdfmin.Dict{
@@ -611,6 +638,11 @@ func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime t
 		pdfmin.Name("VRI"): pdfmin.Dict{
 			pdfmin.Name(vriKey): vriEntry,
 		},
+	}
+	if hasPBAD {
+		dssDict[pdfmin.Name("PBAD_PolicyArtifacts")] = pdfmin.Array{pbadPolicyRef}
+		dssDict[pdfmin.Name("PBAD_LpaArtifacts")] = pdfmin.Array{pbadLpaARef}
+		dssDict[pdfmin.Name("PBAD_LpaSignatures")] = pdfmin.Array{pbadLpaSRef}
 	}
 
 	dssRef := pdfmin.IndirectRef{Obj: nextObj, Gen: 0}

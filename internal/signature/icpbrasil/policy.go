@@ -78,6 +78,18 @@ func (p padesPolicy) SignedAttributes(ctx pades.SigningContext) ([]cms.Attribute
 	return buildICPBrasilSignedAttrs(ctx.Certificate, p.info.policyBase)
 }
 
+// PBADArtifactURLs returns the URLs of the policy artifact, the LPA artifact,
+// and the LPA signature for this PAdES policy. Used to populate the PBAD_*
+// entries of the PAdES DSS (DOC-ICP-15.03 Anexo 4).
+func (p padesPolicy) PBADArtifactURLs() (policyURL, lpaArtifactURL, lpaSignatureURL string) {
+	return p.info.URI, lpaPAdESArtifactURL, lpaPAdESSignatureURL
+}
+
+const (
+	lpaPAdESArtifactURL  = "http://politicas.icpbrasil.gov.br/LPA_PAdES.der"
+	lpaPAdESSignatureURL = "http://politicas.icpbrasil.gov.br/LPA_PAdES.p7s"
+)
+
 // buildICPBrasilSignedAttrs builds the two mandatory ICP-Brasil CMS signed
 // attributes (signing-certificate-v2 and signature-policy-identifier) from
 // the given certificate and policy metadata.

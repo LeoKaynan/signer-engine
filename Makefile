@@ -5,19 +5,23 @@ BINARY := signer-engine
 CMD := ./cmd/signer-engine
 TMP_DIR := tmp
 
-INPUT ?= $(TMP_DIR)/input.txt
-OUTPUT ?= $(TMP_DIR)/signature.p7s
+# INPUT ?= $(TMP_DIR)/input.txt
+# OUTPUT ?= $(TMP_DIR)/signature.p7s
 
-# INPUT ?= $(TMP_DIR)/sample.pdf
-# OUTPUT ?= $(TMP_DIR)/signature.pdf
+INPUT ?= $(TMP_DIR)/sample.pdf
+OUTPUT ?= $(TMP_DIR)/signature.pdf
 
 COSIGN_OUTPUT ?= $(TMP_DIR)/cosignature.p7s
 P12 ?= $(TMP_DIR)/cert2.pfx
 PASSWORD ?= !Toht167
+
+# P12 ?= $(TMP_DIR)/cert.pfx
+# PASSWORD ?= 199516
+
 COSIGN_P12 ?= $(TMP_DIR)/cert.pfx
 COSIGN_PASSWORD ?= 199516
-FORMAT ?= cades
-POLICY ?= PA_AD_RB
+FORMAT ?= pades
+POLICY ?= PA_AD_RA
 MODE ?= attached
 
 .PHONY: sign

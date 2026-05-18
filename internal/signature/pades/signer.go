@@ -14,6 +14,21 @@ import (
 	"time"
 )
 
+// PBADArtifacts holds the ICP-Brasil policy artifacts required for AD-RC/AD-RA
+// DSS entries as defined in DOC-ICP-15.03 Anexo 4.
+type PBADArtifacts struct {
+	PolicyArtifact []byte
+	LpaArtifact    []byte
+	LpaSignature   []byte
+}
+
+// PBADArtifactSource is an optional interface implemented by policies that can
+// describe the URLs needed to fetch the PBAD artifacts (PA, LPA, LPA sig).
+// It is used by the factory layer to populate Signer.PBADArtifacts at level C+.
+type PBADArtifactSource interface {
+	PBADArtifactURLs() (policyURL, lpaArtifactURL, lpaSignatureURL string)
+}
+
 // Signer produces PAdES signatures over PDF documents.
 type Signer struct {
 	Credential             signer.Credential
@@ -22,6 +37,7 @@ type Signer struct {
 	TimeStampProvider      tsa.Provider
 	TrustMaterialExtractor validation.TrustMaterialExtractor
 	Clock                  signaturepolicy.Clock
+	PBADArtifacts          *PBADArtifacts
 }
 
 // stamp requests a timestamp from the configured provider and returns the
@@ -200,7 +216,7 @@ func (s *Signer) applyDSSAndDocumentTimestamp(signed []byte, signingTime time.Ti
 	certDERs := trustMaterial.FlatCertDERs()
 	crlDERs := trustMaterial.FlatCRLDERs()
 
-	withDSS, _, err := addDSS(signed, certDERs, crlDERs, signingTime)
+	withDSS, _, err := addDSS(signed, certDERs, crlDERs, signingTime, s.PBADArtifacts)
 	if err != nil {
 		return nil, fmt.Errorf("pades: add DSS: %w", err)
 	}
