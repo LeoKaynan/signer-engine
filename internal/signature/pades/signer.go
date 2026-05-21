@@ -65,9 +65,10 @@ func (s *Signer) stamp(data []byte) ([]byte, error) {
 // input.ExistingSignature is ignored for PAdES — serial signing is detected
 // from the PDF state itself, not from external CMS bytes.
 //
-// Serial signing currently supports AD-RB and AD-RT only. AD-RC and AD-RA
-// serial signing requires merging the new signer's certs/CRLs into the
-// existing DSS, which is not yet implemented.
+// Serial signing at AD-RC/AD-RA appends the new signer's certs/CRLs and a new
+// VRI entry to the existing DSS, then issues a new DocTimeStamp (and a new
+// ArchiveTimeStamp for AD-RA). Earlier DocTimeStamps remain valid because the
+// merge is performed as an incremental update.
 func (s *Signer) Sign(input signaturepolicy.SignInput) ([]byte, error) {
 	alreadySigned, err := IsAlreadySigned(input.Data)
 	if err != nil {
@@ -107,16 +108,22 @@ func (s *Signer) signSerial(pdfBytes []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if withDSS {
-		return nil, fmt.Errorf("pades: serial signing not yet supported for level %d (AD-RC and above)", level)
-	}
 
 	signingTime := s.Clock.Now()
-	return s.embedSignature(pdfBytes, withTimestamp, signOptions{
+	signed, err := s.embedSignature(pdfBytes, withTimestamp, signOptions{
 		PlaceholderSize: signaturePlaceholderSize(withTimestamp),
 		ReuseEmptyField: true,
 		SigningTime:     signingTime,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if !withDSS {
+		return signed, nil
+	}
+
+	return s.applyDSSAndDocumentTimestamp(signed, signingTime, level)
 }
 
 // validateAndLevel checks required configuration and returns the effective level
@@ -200,45 +207,77 @@ func (s *Signer) embedSignature(pdfBytes []byte, withTimestamp bool, opts signOp
 	return nil, fmt.Errorf("pades: signature did not fit in placeholder after %d retries", maxSignRetries)
 }
 
-// applyDSSAndDocumentTimestamp adds a DSS incremental update with validation material,
-// followed by one or two document timestamps depending on level.
+// applyDSSAndDocumentTimestamp seals the signature with LTV material:
+//
+//  1. DSS update with the signer's chain + CRLs + PBAD artifacts, indexed by
+//     the signature's /Contents hash.
+//  2. DocTimeStamp covering everything so far.
+//  3. DSS update with the TSA's chain + CRLs, indexed by the DocTimeStamp's
+//     /Contents hash — so the DocTimeStamp itself is self-validating.
+//  4. For AD-RA: ArchiveTimeStamp, then another DSS update with its TSA chain.
+//
+// Each signed object that lands in the PDF (signature, DocTimeStamp,
+// ArchiveTimeStamp) gets its own VRI entry, which is what ETSI EN 319 142-1
+// PAdES-LTA expects.
 func (s *Signer) applyDSSAndDocumentTimestamp(signed []byte, signingTime time.Time, level signaturepolicy.Level) ([]byte, error) {
 	leaf := s.Credential.Certificate()
 	chain := s.Credential.Chain()
 
-	trustMaterial, err := s.TrustMaterialExtractor.FromCertificate(context.Background(), leaf, chain)
+	signerMaterial, err := s.TrustMaterialExtractor.FromCertificate(context.Background(), leaf, chain)
 	if err != nil {
 		return nil, fmt.Errorf("pades: extract trust material for DSS: %w", err)
 	}
 	// FromCertificate populates Chain from the input chain plus any discovered
 	// issuers; pass leaf explicitly so it lands first.
-	trustMaterial.Leaf = leaf
-	certDERs := trustMaterial.FlatCertDERs()
-	crlDERs := trustMaterial.FlatCRLDERs()
+	signerMaterial.Leaf = leaf
 
-	withDSS, _, err := addDSS(signed, certDERs, crlDERs, signingTime, s.PBADArtifacts)
+	withSigDSS, err := s.appendDSS(signed, signerMaterial, signingTime, s.PBADArtifacts, "signature DSS")
 	if err != nil {
-		return nil, fmt.Errorf("pades: add DSS: %w", err)
+		return nil, err
 	}
-	slog.Info("pades: DSS added", "certs", len(certDERs), "crls", len(crlDERs))
 
-	withDocTS, err := addDocumentTimestamp(withDSS, "DocTimeStamp", s.stamp)
+	withDocTS, err := s.appendDocTimestampWithDSS(withSigDSS, "DocTimeStamp", signingTime)
 	if err != nil {
-		return nil, fmt.Errorf("pades: add DocTimeStamp: %w", err)
+		return nil, err
 	}
-	slog.Info("pades: DocTimeStamp added")
 
 	if level < signaturepolicy.LevelA {
 		return withDocTS, nil
 	}
 
-	// AD-RA: additional archive document timestamp covering the DocTimeStamp revision.
-	withArchiveTS, err := addDocumentTimestamp(withDocTS, "ArchiveTimeStamp", s.stamp)
+	return s.appendDocTimestampWithDSS(withDocTS, "ArchiveTimeStamp", signingTime)
+}
+
+// appendDocTimestampWithDSS adds a DocTimeStamp (or ArchiveTimeStamp) and
+// follows it with a DSS incremental update carrying the TSA's chain and CRLs,
+// indexed by the timestamp's /Contents hash.
+func (s *Signer) appendDocTimestampWithDSS(pdf []byte, fieldName string, signingTime time.Time) ([]byte, error) {
+	withTS, tokenDER, err := addDocumentTimestamp(pdf, fieldName, s.stamp)
 	if err != nil {
-		return nil, fmt.Errorf("pades: add ArchiveTimeStamp: %w", err)
+		return nil, fmt.Errorf("pades: add %s: %w", fieldName, err)
 	}
-	slog.Info("pades: ArchiveTimeStamp added")
-	return withArchiveTS, nil
+	slog.Info("pades: timestamp added", "field", fieldName, "token_bytes", len(tokenDER))
+
+	tsaMaterial, err := s.TrustMaterialExtractor.FromTimestampToken(context.Background(), tokenDER)
+	if err != nil {
+		return nil, fmt.Errorf("pades: extract TSA trust material for %s: %w", fieldName, err)
+	}
+	if tsaMaterial == nil {
+		return withTS, nil
+	}
+
+	return s.appendDSS(withTS, tsaMaterial, signingTime, nil, fmt.Sprintf("%s DSS", fieldName))
+}
+
+func (s *Signer) appendDSS(pdf []byte, material *validation.TrustMaterial, signingTime time.Time, pbad *PBADArtifacts, label string) ([]byte, error) {
+	certDERs := material.FlatCertDERs()
+	crlDERs := material.FlatCRLDERs()
+	result, _, err := addDSS(pdf, certDERs, crlDERs, signingTime, pbad)
+	if err != nil {
+		return nil, fmt.Errorf("pades: add %s: %w", label, err)
+	}
+	slog.Info("pades: DSS added", "label", label, "certs", len(certDERs), "crls", len(crlDERs))
+	return result, nil
 }
 
 // buildCMS produces a detached CMS (ContentInfo) for toSign.

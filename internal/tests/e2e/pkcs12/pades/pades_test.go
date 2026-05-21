@@ -287,11 +287,11 @@ func TestPKCS12PAdESSerialSigningADRT(t *testing.T) {
 	}
 }
 
-func TestPKCS12PAdESSerialSigningADRCRejected(t *testing.T) {
+func TestPKCS12PAdESSerialSigningADRC(t *testing.T) {
 	chain := fixtures.NewChain(t)
 	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
 	pdf := fixtures.MinimalPDF()
-	svc, _, _ := newDSSService(t, signaturepolicy.LevelC)
+	svc, tsp, _ := newDSSService(t, signaturepolicy.LevelC)
 
 	first, err := svc.Sign(signing.Request{
 		Data:               pdf,
@@ -305,7 +305,7 @@ func TestPKCS12PAdESSerialSigningADRCRejected(t *testing.T) {
 		t.Fatalf("first Sign PAdES AD-RC: %v", err)
 	}
 
-	_, err = svc.Sign(signing.Request{
+	second, err := svc.Sign(signing.Request{
 		Data:               first.Signature,
 		CredentialProvider: signing.CredentialProviderPKCS12,
 		PKCS12Data:         p12,
@@ -313,7 +313,55 @@ func TestPKCS12PAdESSerialSigningADRCRejected(t *testing.T) {
 		Format:             signing.FormatPades,
 		Policy:             "PA_AD_RC",
 	})
-	if err == nil {
-		t.Fatal("expected serial AD-RC to fail until DSS-merge is implemented")
+	if err != nil {
+		t.Fatalf("serial Sign PAdES AD-RC: %v", err)
+	}
+
+	// 2 sig timestamps + 2 doc timestamps (one per AD-RC signature).
+	if len(tsp.Inputs) != 4 {
+		t.Fatalf("expected 4 TSP calls after serial AD-RC, got %d", len(tsp.Inputs))
+	}
+	if bytes.Count(second.Signature, []byte("/Contents <")) < 4 {
+		t.Error("expected at least 4 /Contents in serial AD-RC PDF (2 sigs + 2 DocTimeStamps)")
+	}
+}
+
+func TestPKCS12PAdESSerialSigningADRA(t *testing.T) {
+	chain := fixtures.NewChain(t)
+	p12 := fixtures.NewPKCS12(t, chain, fixtures.DefaultPKCS12Password)
+	pdf := fixtures.MinimalPDF()
+	svc, tsp, _ := newDSSService(t, signaturepolicy.LevelA)
+
+	first, err := svc.Sign(signing.Request{
+		Data:               pdf,
+		CredentialProvider: signing.CredentialProviderPKCS12,
+		PKCS12Data:         p12,
+		PKCS12Pass:         fixtures.DefaultPKCS12Password,
+		Format:             signing.FormatPades,
+		Policy:             "PA_AD_RA",
+	})
+	if err != nil {
+		t.Fatalf("first Sign PAdES AD-RA: %v", err)
+	}
+
+	second, err := svc.Sign(signing.Request{
+		Data:               first.Signature,
+		CredentialProvider: signing.CredentialProviderPKCS12,
+		PKCS12Data:         p12,
+		PKCS12Pass:         fixtures.DefaultPKCS12Password,
+		Format:             signing.FormatPades,
+		Policy:             "PA_AD_RA",
+	})
+	if err != nil {
+		t.Fatalf("serial Sign PAdES AD-RA: %v", err)
+	}
+
+	// Per AD-RA signature: 1 sig timestamp + 1 DocTimeStamp + 1 ArchiveTimeStamp = 3 TSP calls.
+	if len(tsp.Inputs) != 6 {
+		t.Fatalf("expected 6 TSP calls after serial AD-RA, got %d", len(tsp.Inputs))
+	}
+	// 2 signatures + 2 DocTimeStamps + 2 ArchiveTimeStamps = 6 /Contents.
+	if bytes.Count(second.Signature, []byte("/Contents <")) < 6 {
+		t.Error("expected at least 6 /Contents in serial AD-RA PDF")
 	}
 }

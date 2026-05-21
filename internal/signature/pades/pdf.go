@@ -588,6 +588,11 @@ func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime t
 		return nil, "", fmt.Errorf("pades: read catalog for DSS: %w", err)
 	}
 
+	// Existing DSS material — present when this is a serial signature on top of
+	// a level C+ document. New refs are appended to preserve prior VRI entries
+	// (which are still referenced by earlier DocTimeStamps via their ByteRange).
+	existing := readExistingDSS(doc, catalog)
+
 	nextObj := findNextObjNum(doc)
 	var objs []pdfmin.ObjectDef
 
@@ -631,18 +636,26 @@ func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime t
 		vriEntry[pdfmin.Name("PBAD_LpaSignature")] = pbadLpaSRef
 	}
 
+	mergedVRI := pdfmin.Dict{}
+	for k, v := range existing.VRI {
+		mergedVRI[k] = v
+	}
+	mergedVRI[pdfmin.Name(vriKey)] = vriEntry
+
 	dssDict := pdfmin.Dict{
 		pdfmin.Name("Type"):  pdfmin.Name("DSS"),
-		pdfmin.Name("Certs"): certRefs,
-		pdfmin.Name("CRLs"):  crlRefs,
-		pdfmin.Name("VRI"): pdfmin.Dict{
-			pdfmin.Name(vriKey): vriEntry,
-		},
+		pdfmin.Name("Certs"): appendArray(existing.Certs, certRefs),
+		pdfmin.Name("CRLs"):  appendArray(existing.CRLs, crlRefs),
+		pdfmin.Name("VRI"):   mergedVRI,
 	}
 	if hasPBAD {
-		dssDict[pdfmin.Name("PBAD_PolicyArtifacts")] = pdfmin.Array{pbadPolicyRef}
-		dssDict[pdfmin.Name("PBAD_LpaArtifacts")] = pdfmin.Array{pbadLpaARef}
-		dssDict[pdfmin.Name("PBAD_LpaSignatures")] = pdfmin.Array{pbadLpaSRef}
+		dssDict[pdfmin.Name("PBAD_PolicyArtifacts")] = appendArray(existing.PBADPolicies, pdfmin.Array{pbadPolicyRef})
+		dssDict[pdfmin.Name("PBAD_LpaArtifacts")] = appendArray(existing.PBADLpaArtifacts, pdfmin.Array{pbadLpaARef})
+		dssDict[pdfmin.Name("PBAD_LpaSignatures")] = appendArray(existing.PBADLpaSignatures, pdfmin.Array{pbadLpaSRef})
+	} else if len(existing.PBADPolicies) > 0 {
+		dssDict[pdfmin.Name("PBAD_PolicyArtifacts")] = existing.PBADPolicies
+		dssDict[pdfmin.Name("PBAD_LpaArtifacts")] = existing.PBADLpaArtifacts
+		dssDict[pdfmin.Name("PBAD_LpaSignatures")] = existing.PBADLpaSignatures
 	}
 
 	dssRef := pdfmin.IndirectRef{Obj: nextObj, Gen: 0}
@@ -664,33 +677,76 @@ func addDSS(signedPDF []byte, certDERs [][]byte, crlDERs [][]byte, signingTime t
 	return result, vriKey, nil
 }
 
+// existingDSS captures the references already present in the current DSS so a
+// serial signature can extend them without breaking earlier DocTimeStamps.
+type existingDSS struct {
+	Certs             pdfmin.Array
+	CRLs              pdfmin.Array
+	VRI               pdfmin.Dict
+	PBADPolicies      pdfmin.Array
+	PBADLpaArtifacts  pdfmin.Array
+	PBADLpaSignatures pdfmin.Array
+}
+
+func readExistingDSS(doc *pdfmin.Document, catalog pdfmin.Dict) existingDSS {
+	dssRef, ok := catalog.GetRef("DSS")
+	if !ok {
+		return existingDSS{}
+	}
+	v, err := doc.ReadIndirectObject(dssRef)
+	if err != nil {
+		return existingDSS{}
+	}
+	dict, ok := v.(pdfmin.Dict)
+	if !ok {
+		return existingDSS{}
+	}
+	out := existingDSS{}
+	out.Certs, _ = dict.GetArray("Certs")
+	out.CRLs, _ = dict.GetArray("CRLs")
+	out.VRI, _ = dict.GetDict("VRI")
+	out.PBADPolicies, _ = dict.GetArray("PBAD_PolicyArtifacts")
+	out.PBADLpaArtifacts, _ = dict.GetArray("PBAD_LpaArtifacts")
+	out.PBADLpaSignatures, _ = dict.GetArray("PBAD_LpaSignatures")
+	return out
+}
+
+func appendArray(existing pdfmin.Array, additions pdfmin.Array) pdfmin.Array {
+	out := make(pdfmin.Array, 0, len(existing)+len(additions))
+	out = append(out, existing...)
+	out = append(out, additions...)
+	return out
+}
+
 // addDocumentTimestamp appends an incremental update containing a DocTimeStamp field.
 // stampFn receives the bytes outside /Contents and returns the RFC 3161 token DER.
-// Retries with a larger placeholder if the token does not fit.
-func addDocumentTimestamp(pdf []byte, fieldName string, stampFn func([]byte) ([]byte, error)) ([]byte, error) {
+// Retries with a larger placeholder if the token does not fit. Also returns the
+// token DER so the caller can extract the TSA chain and update the DSS with a
+// VRI entry for this DocTimeStamp.
+func addDocumentTimestamp(pdf []byte, fieldName string, stampFn func([]byte) ([]byte, error)) ([]byte, []byte, error) {
 	size := placeholderSizeDocTS
 	for attempt := 0; attempt < maxDocTSRetries; attempt++ {
-		result, ok, err := tryAddDocumentTimestamp(pdf, fieldName, size, stampFn)
+		result, tokenDER, ok, err := tryAddDocumentTimestamp(pdf, fieldName, size, stampFn)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if ok {
-			return result, nil
+			return result, tokenDER, nil
 		}
 		size *= 2
 	}
-	return nil, fmt.Errorf("pades: document timestamp did not fit in placeholder after %d retries", maxDocTSRetries)
+	return nil, nil, fmt.Errorf("pades: document timestamp did not fit in placeholder after %d retries", maxDocTSRetries)
 }
 
-func tryAddDocumentTimestamp(pdf []byte, fieldName string, placeholderSize int, stampFn func([]byte) ([]byte, error)) ([]byte, bool, error) {
+func tryAddDocumentTimestamp(pdf []byte, fieldName string, placeholderSize int, stampFn func([]byte) ([]byte, error)) ([]byte, []byte, bool, error) {
 	doc, err := pdfmin.ParseDocument(pdf)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: parse PDF for DocTimeStamp: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: parse PDF for DocTimeStamp: %w", err)
 	}
 
 	catalog, err := doc.ReadCatalog()
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: read catalog for DocTimeStamp: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: read catalog for DocTimeStamp: %w", err)
 	}
 
 	nextObj := findNextObjNum(doc)
@@ -728,7 +784,7 @@ func tryAddDocumentTimestamp(pdf []byte, fieldName string, placeholderSize int, 
 	var objs []pdfmin.ObjectDef
 	acroFormObj, updatedFieldsObj, err := appendFieldToAcroForm(doc, catalog, fieldRef)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if acroFormObj.Obj > 0 {
 		objs = append(objs, acroFormObj)
@@ -741,18 +797,18 @@ func tryAddDocumentTimestamp(pdf []byte, fieldName string, placeholderSize int, 
 
 	out, _, _, err := doc.WriteIncremental(objs)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: write DocTimeStamp incremental update: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: write DocTimeStamp incremental update: %w", err)
 	}
 
 	ltAbs, gtAbs, err := findLastContentsPositions(out)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: find Contents for DocTimeStamp: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: find Contents for DocTimeStamp: %w", err)
 	}
 	cs, ce := int64(ltAbs), int64(gtAbs+1)
 
 	out, err = patchLastByteRange(out, cs, ce)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: patch ByteRange for DocTimeStamp: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: patch ByteRange for DocTimeStamp: %w", err)
 	}
 
 	toStamp := make([]byte, 0, len(out)-int(ce-cs))
@@ -761,14 +817,14 @@ func tryAddDocumentTimestamp(pdf []byte, fieldName string, placeholderSize int, 
 
 	token, err := stampFn(toStamp)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: request document timestamp: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: request document timestamp: %w", err)
 	}
 
 	result, ok, err := patchLastContents(out, token)
 	if err != nil {
-		return nil, false, fmt.Errorf("pades: patch DocTimeStamp Contents: %w", err)
+		return nil, nil, false, fmt.Errorf("pades: patch DocTimeStamp Contents: %w", err)
 	}
-	return result, ok, nil
+	return result, token, ok, nil
 }
 
 // buildDERStreamObjects creates PDF stream objects from DER-encoded items.
